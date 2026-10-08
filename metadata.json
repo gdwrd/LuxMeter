@@ -1,0 +1,6 @@
+{
+  "name": "LuxMeter",
+  "description": "Tactile vintage film light meter with 35mm and medium format support, reciprocity failure calculation, film stock library, and exposure log.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

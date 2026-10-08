@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Outer brass knurled ring -->
+    <path
+        android:fillColor="#C6923B"
+        android:pathData="M54,22 C36.33,22 22,36.33 22,54 C22,71.67 36.33,86 54,86 C71.67,86 86,71.67 86,54 C86,36.33 71.67,22 54,22 Z" />
+    <!-- Inner dial body (dark enamel / leather) -->
+    <path
+        android:fillColor="#1C1814"
+        android:pathData="M54,26 C38.54,26 26,38.54 26,54 C26,69.46 38.54,82 54,82 C69.46,82 82,69.46 82,54 C82,38.54 69.46,26 54,26 Z" />
+    <!-- Meter scale arc in ivory -->
+    <path
+        android:strokeColor="#E6DCB8"
+        android:strokeWidth="2.5"
+        android:pathData="M34,60 C34,44 43,36 54,36 C65,36 74,44 74,60" />
+    <!-- Scale ticks -->
+    <path
+        android:strokeColor="#C6923B"
+        android:strokeWidth="1.5"
+        android:pathData="M38,48 L41,50 M46,40 L48,43 M54,36 L54,40 M62,40 L60,43 M70,48 L67,50" />
+    <!-- Meter indicator needle in crimson red -->
+    <path
+        android:strokeColor="#D32F2F"
+        android:strokeWidth="2.2"
+        android:strokeLineCap="round"
+        android:pathData="M54,64 L62,41" />
+    <!-- Center brass hub -->
+    <path
+        android:fillColor="#E5B25D"
+        android:pathData="M54,60 C51.79,60 50,61.79 50,64 C50,66.21 51.79,68 54,68 C56.21,68 58,66.21 58,64 C58,61.79 56.21,60 54,60 Z" />
+    <!-- Center screw dot -->
+    <path
+        android:fillColor="#2C2219"
+        android:pathData="M54,63 C53.45,63 53,63.45 53,64 C53,64.55 53.45,65 54,65 C54.55,65 55,64.55 55,64 C55,63.45 54.55,63 54,63 Z" />
+    <!-- EV symbol on top -->
+    <path
+        android:strokeColor="#E5B25D"
+        android:strokeWidth="1.2"
+        android:pathData="M51,73 L57,73 M51,75 L55,75 M51,77 L57,77" />
+</vector>
