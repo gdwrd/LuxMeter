@@ -1,0 +1,333 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 1000" width="100%" height="100%">
+  <defs>
+    <!-- Screen & Case Gradients -->
+    <linearGradient id="phoneBody" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#2c2c2e"/>
+      <stop offset="50%" stop-color="#1c1c1e"/>
+      <stop offset="100%" stop-color="#0a0a0c"/>
+    </linearGradient>
+
+    <linearGradient id="screenBg" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#171513"/>
+      <stop offset="50%" stop-color="#12100e"/>
+      <stop offset="100%" stop-color="#0c0b09"/>
+    </linearGradient>
+
+    <linearGradient id="brassGold" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffd56b"/>
+      <stop offset="50%" stop-color="#d4af37"/>
+      <stop offset="100%" stop-color="#8c6d16"/>
+    </linearGradient>
+
+    <linearGradient id="cardBg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#221e1a"/>
+      <stop offset="100%" stop-color="#181512"/>
+    </linearGradient>
+
+    <radialGradient id="lensGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#ffb300" stop-opacity="0.35"/>
+      <stop offset="100%" stop-color="#000000" stop-opacity="0"/>
+    </radialGradient>
+
+    <linearGradient id="needleGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#e53935"/>
+      <stop offset="100%" stop-color="#ff6b6b"/>
+    </linearGradient>
+
+    <filter id="shadowHeavy" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="16" stdDeviation="24" flood-color="#000000" flood-opacity="0.6"/>
+    </filter>
+
+    <filter id="subtleGlow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+  </defs>
+
+  <!-- Canvas Background for Preview Display -->
+  <rect width="800" height="1000" fill="#0d0e11"/>
+  
+  <!-- Subtle Blueprint / Grid lines in Background -->
+  <g stroke="#ffffff" stroke-opacity="0.03" stroke-width="1">
+    <line x1="0" y1="200" x2="800" y2="200"/>
+    <line x1="0" y1="400" x2="800" y2="400"/>
+    <line x1="0" y1="600" x2="800" y2="600"/>
+    <line x1="0" y1="800" x2="800" y2="800"/>
+    <line x1="200" y1="0" x2="200" y2="1000"/>
+    <line x1="400" y1="0" x2="400" y2="1000"/>
+    <line x1="600" y1="0" x2="600" y2="1000"/>
+  </g>
+
+  <!-- Smartphone Outer Chassis -->
+  <g transform="translate(170, 30)" filter="url(#shadowHeavy)">
+    <!-- Outer Rim -->
+    <rect x="0" y="0" width="460" height="940" rx="46" fill="url(#phoneBody)" stroke="#48484a" stroke-width="2.5"/>
+    <!-- Inner Screen Bezel -->
+    <rect x="10" y="10" width="440" height="920" rx="38" fill="url(#screenBg)"/>
+
+    <!-- Camera Hole Punch Notch -->
+    <circle cx="230" cy="24" r="5" fill="#050505" stroke="#1c1c1e" stroke-width="1.5"/>
+
+    <!-- STATUS BAR -->
+    <g font-family="-apple-system, Roboto, sans-serif" font-size="11" fill="#a09d98" font-weight="600">
+      <text x="34" y="32">09:41</text>
+      <g transform="translate(390, 24)" fill="#a09d98">
+        <!-- Battery Icon -->
+        <rect x="0" y="0" width="22" height="11" rx="3" fill="none" stroke="#a09d98" stroke-width="1.2"/>
+        <rect x="2" y="2" width="15" height="7" rx="1.5" fill="#a09d98"/>
+        <path d="M 23 3 L 24 3 L 24 8 L 23 8 Z" fill="#a09d98"/>
+      </g>
+    </g>
+
+    <!-- APP HEADER -->
+    <g transform="translate(20, 48)">
+      <!-- Leatherette / Brass Bar -->
+      <rect x="0" y="0" width="400" height="42" rx="10" fill="#1c1915" stroke="#3b3223" stroke-width="1.5"/>
+      <text x="16" y="26" font-family="-apple-system, sans-serif" font-size="16" font-weight="900" letter-spacing="3" fill="#ffd56b">LUXMETER</text>
+      
+      <!-- Film Stock Badge -->
+      <g transform="translate(262, 7)">
+        <rect x="0" y="0" width="126" height="26" rx="6" fill="#2d2212" stroke="#d4af37" stroke-width="1.2"/>
+        <circle cx="14" cy="13" r="5" fill="#ffb300"/>
+        <text x="25" y="18" font-family="monospace, sans-serif" font-size="10" font-weight="700" fill="#ffd56b">PORTRA 400</text>
+      </g>
+    </g>
+
+    <!-- GALVANOMETER ANALOG METER GAUGE -->
+    <g transform="translate(20, 98)">
+      <rect x="0" y="0" width="400" height="126" rx="14" fill="url(#cardBg)" stroke="#3e3526" stroke-width="1.5"/>
+      
+      <!-- Meter Scale Header -->
+      <text x="20" y="24" font-family="-apple-system, sans-serif" font-size="11" font-weight="700" letter-spacing="1" fill="#9e917d">INCIDENT LIGHT SENSOR</text>
+      <text x="320" y="24" font-family="monospace, sans-serif" font-size="11" font-weight="700" fill="#ffd56b">12,800 lx</text>
+
+      <!-- Meter Arc -->
+      <path d="M 50 100 A 240 240 0 0 1 350 100" fill="none" stroke="#3a3224" stroke-width="16" stroke-linecap="round"/>
+      <path d="M 50 100 A 240 240 0 0 1 270 70" fill="none" stroke="#d4af37" stroke-width="16" stroke-linecap="round" opacity="0.8"/>
+
+      <!-- Scale Ticks & Numbers -->
+      <g font-family="monospace, sans-serif" font-size="9" fill="#8c8270" text-anchor="middle">
+        <text x="60" y="85">4</text>
+        <text x="110" y="65">7</text>
+        <text x="170" y="52">10</text>
+        <text x="230" y="50">12</text>
+        <text x="290" y="56">14</text>
+        <text x="340" y="75">17</text>
+      </g>
+
+      <!-- Center Gauge Pivot & Needle pointing to EV 12.3 -->
+      <circle cx="200" cy="140" r="14" fill="#181512" stroke="#d4af37" stroke-width="2"/>
+      <line x1="200" y1="140" x2="238" y2="44" stroke="url(#needleGrad)" stroke-width="3" stroke-linecap="round" filter="url(#subtleGlow)"/>
+
+      <!-- EV Badge in Center -->
+      <g transform="translate(160, 88)">
+        <rect x="0" y="0" width="80" height="28" rx="6" fill="#100e0b" stroke="#705b22" stroke-width="1.2"/>
+        <text x="40" y="19" font-family="monospace, sans-serif" font-size="14" font-weight="900" fill="#ffffff" text-anchor="middle">EV 12.3</text>
+      </g>
+    </g>
+
+    <!-- VIEWFINDER & FOCAL LENGTH SIMULATOR CARD -->
+    <g transform="translate(20, 234)">
+      <rect x="0" y="0" width="400" height="236" rx="14" fill="url(#cardBg)" stroke="#3e3526" stroke-width="1.5"/>
+
+      <!-- Viewfinder Header & Format Chip -->
+      <text x="18" y="24" font-family="-apple-system, sans-serif" font-size="11" font-weight="700" letter-spacing="1" fill="#9e917d">OPTICAL FRAMING</text>
+      
+      <!-- Medium Format / 35mm toggle pill -->
+      <g transform="translate(270, 10)">
+        <rect x="0" y="0" width="116" height="20" rx="5" fill="#15120e" stroke="#5a491e" stroke-width="1"/>
+        <text x="58" y="14" font-family="-apple-system, sans-serif" font-size="9" font-weight="700" fill="#ffd56b" text-anchor="middle">MEDIUM (6×6)</text>
+      </g>
+
+      <!-- Camera Preview Box with Frame Guides -->
+      <g transform="translate(18, 36)">
+        <rect x="0" y="0" width="364" height="145" rx="8" fill="#080706" stroke="#2c271f" stroke-width="1"/>
+
+        <!-- Viewfinder Scene representation: Golden hour landscape with trees and mountain -->
+        <path d="M 0 110 Q 90 70 180 95 T 364 85 L 364 145 L 0 145 Z" fill="#1e1810"/>
+        <path d="M 60 145 L 110 90 L 160 145 Z" fill="#2b2014"/>
+        <path d="M 140 145 L 200 80 L 260 145 Z" fill="#241b10"/>
+        <circle cx="310" cy="40" r="18" fill="#ffd56b" opacity="0.6"/>
+
+        <!-- 6x6 Medium Format Square Frame Lines (Golden) -->
+        <rect x="110" y="5" width="144" height="135" fill="none" stroke="#ffcc00" stroke-width="1.8" stroke-dasharray="8,4"/>
+        <text x="182" y="22" font-family="monospace, sans-serif" font-size="9" font-weight="700" fill="#ffd56b" text-anchor="middle">6×6 CROP</text>
+
+        <!-- Center Crosshair / Metering Spot -->
+        <circle cx="182" cy="72" r="14" fill="none" stroke="#ffffff" stroke-width="1.5" stroke-opacity="0.8"/>
+        <circle cx="182" cy="72" r="2" fill="#e53935"/>
+        <line x1="162" y1="72" x2="202" y2="72" stroke="#ffffff" stroke-width="1" stroke-opacity="0.5"/>
+        <line x1="182" y1="52" x2="182" y2="92" stroke="#ffffff" stroke-width="1" stroke-opacity="0.5"/>
+
+        <!-- Lens Focal Length Badge -->
+        <g transform="translate(10, 115)">
+          <rect x="0" y="0" width="68" height="20" rx="4" fill="#000000" fill-opacity="0.75" stroke="#d4af37" stroke-width="1"/>
+          <text x="34" y="14" font-family="monospace, sans-serif" font-size="10" font-weight="800" fill="#ffd56b" text-anchor="middle">50mm Eq.</text>
+        </g>
+      </g>
+
+      <!-- Focal Length Lens Selector Chips -->
+      <g transform="translate(18, 192)">
+        <!-- 28mm -->
+        <rect x="0" y="0" width="52" height="28" rx="6" fill="#181511" stroke="#332a1b" stroke-width="1"/>
+        <text x="26" y="18" font-family="monospace, sans-serif" font-size="10" fill="#887f70" text-anchor="middle">28mm</text>
+        <!-- 35mm -->
+        <rect x="60" y="0" width="52" height="28" rx="6" fill="#181511" stroke="#332a1b" stroke-width="1"/>
+        <text x="86" y="18" font-family="monospace, sans-serif" font-size="10" fill="#887f70" text-anchor="middle">35mm</text>
+        <!-- 50mm (Active) -->
+        <rect x="120" y="0" width="56" height="28" rx="6" fill="#d4af37" stroke="#ffd56b" stroke-width="1.5"/>
+        <text x="148" y="18" font-family="monospace, sans-serif" font-size="10" font-weight="900" fill="#12100a" text-anchor="middle">50mm</text>
+        <!-- 85mm -->
+        <rect x="184" y="0" width="52" height="28" rx="6" fill="#181511" stroke="#332a1b" stroke-width="1"/>
+        <text x="210" y="18" font-family="monospace, sans-serif" font-size="10" fill="#887f70" text-anchor="middle">85mm</text>
+        <!-- 135mm -->
+        <rect x="244" y="0" width="54" height="28" rx="6" fill="#181511" stroke="#332a1b" stroke-width="1"/>
+        <text x="271" y="18" font-family="monospace, sans-serif" font-size="10" fill="#887f70" text-anchor="middle">135mm</text>
+        <!-- 200mm -->
+        <rect x="306" y="0" width="56" height="28" rx="6" fill="#181511" stroke="#332a1b" stroke-width="1"/>
+        <text x="334" y="18" font-family="monospace, sans-serif" font-size="10" fill="#887f70" text-anchor="middle">200mm</text>
+      </g>
+    </g>
+
+    <!-- TACTILE ROTARY DIALS SECTION (SHUTTER / APERTURE / ISO) -->
+    <g transform="translate(20, 480)">
+      <rect x="0" y="0" width="400" height="204" rx="14" fill="url(#cardBg)" stroke="#3e3526" stroke-width="1.5"/>
+
+      <!-- Dial 1: SHUTTER SPEED -->
+      <g transform="translate(18, 16)">
+        <text x="56" y="16" font-family="-apple-system, sans-serif" font-size="10" font-weight="700" letter-spacing="1" fill="#a89a80" text-anchor="middle">SHUTTER</text>
+        <!-- Knob Ring -->
+        <circle cx="56" cy="74" r="48" fill="#151310" stroke="url(#brassGold)" stroke-width="4"/>
+        <circle cx="56" cy="74" r="40" fill="#201c18" stroke="#383022" stroke-width="2"/>
+        <!-- Value Display -->
+        <text x="56" y="80" font-family="monospace, sans-serif" font-size="16" font-weight="900" fill="#ffffff" text-anchor="middle">1/250</text>
+        <!-- Notches -->
+        <line x1="56" y1="28" x2="56" y2="34" stroke="#ffd56b" stroke-width="2.5"/>
+        <!-- Sub label -->
+        <text x="56" y="142" font-family="-apple-system, sans-serif" font-size="10" font-weight="600" fill="#887f70" text-anchor="middle">4.0 ms</text>
+      </g>
+
+      <!-- Dial 2: APERTURE (Center, Hero) -->
+      <g transform="translate(144, 12)">
+        <text x="56" y="18" font-family="-apple-system, sans-serif" font-size="10" font-weight="800" letter-spacing="1" fill="#ffd56b" text-anchor="middle">APERTURE</text>
+        <!-- Outer Knurling -->
+        <circle cx="56" cy="78" r="54" fill="#151310" stroke="url(#brassGold)" stroke-width="5" filter="url(#subtleGlow)"/>
+        <circle cx="56" cy="78" r="44" fill="#28221b" stroke="#554422" stroke-width="2"/>
+        <!-- Aperture Iris Icon / Value -->
+        <text x="56" y="84" font-family="monospace, sans-serif" font-size="20" font-weight="900" fill="#ffd56b" text-anchor="middle">f/8.0</text>
+        <!-- Top Indicator Pip -->
+        <polygon points="56,26 52,34 60,34" fill="#e53935"/>
+        <!-- DoF badge -->
+        <rect x="14" y="140" width="84" height="20" rx="5" fill="#15120e" stroke="#554422" stroke-width="1"/>
+        <text x="56" y="154" font-family="monospace, sans-serif" font-size="9" font-weight="700" fill="#a89a80" text-anchor="middle">DoF: 2.8m-∞</text>
+      </g>
+
+      <!-- Dial 3: ISO FILM SPEED -->
+      <g transform="translate(270, 16)">
+        <text x="56" y="16" font-family="-apple-system, sans-serif" font-size="10" font-weight="700" letter-spacing="1" fill="#a89a80" text-anchor="middle">FILM ISO</text>
+        <!-- Knob Ring -->
+        <circle cx="56" cy="74" r="48" fill="#151310" stroke="url(#brassGold)" stroke-width="4"/>
+        <circle cx="56" cy="74" r="40" fill="#201c18" stroke="#383022" stroke-width="2"/>
+        <!-- Value Display -->
+        <text x="56" y="80" font-family="monospace, sans-serif" font-size="16" font-weight="900" fill="#ffffff" text-anchor="middle">400</text>
+        <!-- Notches -->
+        <line x1="56" y1="28" x2="56" y2="34" stroke="#ffd56b" stroke-width="2.5"/>
+        <!-- Reciprocity Info -->
+        <text x="56" y="142" font-family="-apple-system, sans-serif" font-size="10" font-weight="600" fill="#887f70" text-anchor="middle">Reciprocity: OK</text>
+      </g>
+
+      <!-- Quick Exposure Lock & Timer Button Bar -->
+      <g transform="translate(18, 170)">
+        <rect x="0" y="0" width="176" height="24" rx="6" fill="#161310" stroke="#3d3322" stroke-width="1"/>
+        <circle cx="16" cy="12" r="4" fill="#4caf50"/>
+        <text x="28" y="16" font-family="-apple-system, sans-serif" font-size="9" font-weight="700" fill="#c0b5a0">MATCHED EXPOSURE</text>
+
+        <rect x="188" y="0" width="176" height="24" rx="6" fill="#161310" stroke="#3d3322" stroke-width="1"/>
+        <text x="276" y="16" font-family="-apple-system, sans-serif" font-size="9" font-weight="700" fill="#ffd56b" text-anchor="middle">⏱ EXPOSURE TIMER</text>
+      </g>
+    </g>
+
+    <!-- RECIPROCITY & FORMAT INFO BANNER -->
+    <g transform="translate(20, 694)">
+      <rect x="0" y="0" width="400" height="42" rx="10" fill="#161411" stroke="#30281b" stroke-width="1"/>
+      <!-- Sunny 16 Quick Hint -->
+      <text x="16" y="25" font-family="-apple-system, sans-serif" font-size="10" font-weight="700" fill="#ffd56b">☀ SUNNY 16 PRESET:</text>
+      <text x="140" y="25" font-family="-apple-system, sans-serif" font-size="10" fill="#b8ad96">f/16 · 1/500s @ ISO 400 (Direct Sunlight)</text>
+      <g transform="translate(365, 14)">
+        <circle cx="8" cy="8" r="8" fill="#d4af37"/>
+        <text x="8" y="12" font-size="11" font-weight="900" fill="#100e0a" text-anchor="middle">→</text>
+      </g>
+    </g>
+
+    <!-- VINTAGE BOTTOM NAVIGATION BAR -->
+    <g transform="translate(20, 746)">
+      <rect x="0" y="0" width="400" height="58" rx="14" fill="#191612" stroke="#483d29" stroke-width="1.8"/>
+
+      <!-- Tab 1: METER (Active) -->
+      <g transform="translate(10, 8)">
+        <rect x="0" y="0" width="118" height="42" rx="10" fill="#2d2516" stroke="#d4af37" stroke-width="1.5"/>
+        <circle cx="28" cy="21" r="9" fill="#d4af37"/>
+        <text x="28" y="25" font-size="11" font-weight="900" fill="#1a140b" text-anchor="middle">⏱</text>
+        <text x="70" y="25" font-family="-apple-system, sans-serif" font-size="12" font-weight="900" fill="#ffd56b">METER</text>
+      </g>
+
+      <!-- Tab 2: LOG & GEAR -->
+      <g transform="translate(140, 8)">
+        <rect x="0" y="0" width="118" height="42" rx="10" fill="#13100c"/>
+        <text x="26" y="26" font-size="13" fill="#8d8372">📖</text>
+        <text x="68" y="25" font-family="-apple-system, sans-serif" font-size="12" font-weight="700" fill="#8d8372">LOG &amp; GEAR</text>
+      </g>
+
+      <!-- Tab 3: SUNNY 16 -->
+      <g transform="translate(270, 8)">
+        <rect x="0" y="0" width="120" height="42" rx="10" fill="#13100c"/>
+        <text x="26" y="26" font-size="13" fill="#8d8372">☀</text>
+        <text x="70" y="25" font-family="-apple-system, sans-serif" font-size="12" font-weight="700" fill="#8d8372">SUNNY 16</text>
+      </g>
+    </g>
+
+    <!-- Bottom Home Indicator Line -->
+    <rect x="160" y="818" width="120" height="4" rx="2" fill="#58544d"/>
+  </g>
+
+  <!-- Side Feature Callout Cards (Highlights) -->
+  <g transform="translate(30, 160)" filter="url(#subtleGlow)">
+    <rect x="0" y="0" width="120" height="96" rx="10" fill="#1a1714" stroke="#d4af37" stroke-width="1"/>
+    <text x="12" y="22" font-family="-apple-system, sans-serif" font-size="10" font-weight="800" fill="#ffd56b">35mm &amp; 120</text>
+    <text x="12" y="38" font-family="-apple-system, sans-serif" font-size="9" fill="#b0a594">Medium Format</text>
+    <text x="12" y="52" font-family="-apple-system, sans-serif" font-size="9" fill="#b0a594">DoF &amp; Equivalent</text>
+    <text x="12" y="66" font-family="-apple-system, sans-serif" font-size="9" fill="#b0a594">Aperture Calcs</text>
+    <rect x="12" y="74" width="70" height="14" rx="3" fill="#d4af37"/>
+    <text x="47" y="84" font-family="-apple-system, sans-serif" font-size="8" font-weight="900" fill="#15120a" text-anchor="middle">FORMAT READY</text>
+  </g>
+
+  <g transform="translate(650, 240)" filter="url(#subtleGlow)">
+    <rect x="0" y="0" width="120" height="96" rx="10" fill="#1a1714" stroke="#d4af37" stroke-width="1"/>
+    <text x="12" y="22" font-family="-apple-system, sans-serif" font-size="10" font-weight="800" fill="#ffd56b">LENS FRAMING</text>
+    <text x="12" y="38" font-family="-apple-system, sans-serif" font-size="9" fill="#b0a594">24mm to 200mm</text>
+    <text x="12" y="52" font-family="-apple-system, sans-serif" font-size="9" fill="#b0a594">Real Viewfinder</text>
+    <text x="12" y="66" font-family="-apple-system, sans-serif" font-size="9" fill="#b0a594">Accurate Crop</text>
+    <rect x="12" y="74" width="70" height="14" rx="3" fill="#d4af37"/>
+    <text x="47" y="84" font-family="-apple-system, sans-serif" font-size="8" font-weight="900" fill="#15120a" text-anchor="middle">ZOOM &amp; CROP</text>
+  </g>
+
+  <g transform="translate(30, 520)" filter="url(#subtleGlow)">
+    <rect x="0" y="0" width="120" height="96" rx="10" fill="#1a1714" stroke="#d4af37" stroke-width="1"/>
+    <text x="12" y="22" font-family="-apple-system, sans-serif" font-size="10" font-weight="800" fill="#ffd56b">SUNNY 16</text>
+    <text x="12" y="38" font-family="-apple-system, sans-serif" font-size="9" fill="#b0a594">Built-in Rule</text>
+    <text x="12" y="52" font-family="-apple-system, sans-serif" font-size="9" fill="#b0a594">Lighting Presets</text>
+    <text x="12" y="66" font-family="-apple-system, sans-serif" font-size="9" fill="#b0a594">35mm &amp; 120 Guide</text>
+    <rect x="12" y="74" width="70" height="14" rx="3" fill="#d4af37"/>
+    <text x="47" y="84" font-family="-apple-system, sans-serif" font-size="8" font-weight="900" fill="#15120a" text-anchor="middle">1-TAP APPLY</text>
+  </g>
+
+  <g transform="translate(650, 600)" filter="url(#subtleGlow)">
+    <rect x="0" y="0" width="120" height="96" rx="10" fill="#1a1714" stroke="#d4af37" stroke-width="1"/>
+    <text x="12" y="22" font-family="-apple-system, sans-serif" font-size="10" font-weight="800" fill="#ffd56b">RECIPROCITY</text>
+    <text x="12" y="38" font-family="-apple-system, sans-serif" font-size="9" fill="#b0a594">Schwarzschild law</text>
+    <text x="12" y="52" font-family="-apple-system, sans-serif" font-size="9" fill="#b0a594">Portra, HP5+, etc.</text>
+    <text x="12" y="66" font-family="-apple-system, sans-serif" font-size="9" fill="#b0a594">Haptic Count Timer</text>
+    <rect x="12" y="74" width="70" height="14" rx="3" fill="#d4af37"/>
+    <text x="47" y="84" font-family="-apple-system, sans-serif" font-size="8" font-weight="900" fill="#15120a" text-anchor="middle">LONG EXPOSURE</text>
+  </g>
+</svg>

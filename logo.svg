@@ -1,0 +1,156 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <defs>
+    <!-- Background Gradient -->
+    <radialGradient id="bgGrad" cx="50%" cy="50%" r="65%">
+      <stop offset="0%" stop-color="#24211e"/>
+      <stop offset="60%" stop-color="#141210"/>
+      <stop offset="100%" stop-color="#090807"/>
+    </radialGradient>
+
+    <!-- Brass / Gold Rim Gradient -->
+    <linearGradient id="brassGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffd56b"/>
+      <stop offset="25%" stop-color="#d4af37"/>
+      <stop offset="50%" stop-color="#997a15"/>
+      <stop offset="75%" stop-color="#e6c65c"/>
+      <stop offset="100%" stop-color="#806208"/>
+    </linearGradient>
+
+    <!-- Dark Metal Dial Gradient -->
+    <linearGradient id="metalDialGrad" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#181818"/>
+      <stop offset="50%" stop-color="#2a2a2a"/>
+      <stop offset="100%" stop-color="#1a1a1a"/>
+    </linearGradient>
+
+    <!-- Lens Glass Reflection Gradient -->
+    <radialGradient id="lensGlass" cx="42%" cy="38%" r="60%">
+      <stop offset="0%" stop-color="#ffbe53" stop-opacity="0.9"/>
+      <stop offset="35%" stop-color="#e65100" stop-opacity="0.8"/>
+      <stop offset="70%" stop-color="#4a148c" stop-opacity="0.95"/>
+      <stop offset="100%" stop-color="#0b0814"/>
+    </radialGradient>
+
+    <!-- Glass Glare Highlight -->
+    <linearGradient id="glassGlare" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.7"/>
+      <stop offset="45%" stop-color="#ffffff" stop-opacity="0.05"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+
+    <!-- Film Sprocket Gradient -->
+    <linearGradient id="filmBorder" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#d4af37"/>
+      <stop offset="100%" stop-color="#aa820a"/>
+    </linearGradient>
+
+    <filter id="dropShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="12" stdDeviation="16" flood-color="#000000" flood-opacity="0.8"/>
+    </filter>
+
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+  </defs>
+
+  <!-- Outer Rounded Shield -->
+  <rect x="24" y="24" width="464" height="464" rx="108" fill="url(#bgGrad)" stroke="#3a342c" stroke-width="4" filter="url(#dropShadow)"/>
+
+  <!-- Vintage Camera Leatherette Texture Accent Border -->
+  <rect x="36" y="36" width="440" height="440" rx="96" fill="none" stroke="#2a251e" stroke-width="2" stroke-dasharray="6,4"/>
+
+  <!-- Outer Heavy Knurled Brass Dial Ring -->
+  <circle cx="256" cy="256" r="195" fill="none" stroke="url(#brassGrad)" stroke-width="14" filter="url(#dropShadow)"/>
+
+  <!-- Dial Knurling Teeth (vintage milled bezel) -->
+  <g stroke="#ffd700" stroke-width="2.5" opacity="0.4" stroke-linecap="round">
+    <line x1="256" y1="52" x2="256" y2="60"/>
+    <line x1="256" y1="452" x2="256" y2="460"/>
+    <line x1="52" y1="256" x2="60" y2="256"/>
+    <line x1="452" y1="256" x2="460" y2="256"/>
+    <line x1="112" y1="112" x2="118" y2="118"/>
+    <line x1="400" y1="400" x2="394" y2="394"/>
+    <line x1="400" y1="112" x2="394" y2="118"/>
+    <line x1="112" y1="400" x2="118" y2="394"/>
+    <line x1="180" y1="70" x2="183" y2="78"/>
+    <line x1="332" y1="70" x2="329" y2="78"/>
+    <line x1="180" y1="442" x2="183" y2="434"/>
+    <line x1="332" y1="442" x2="329" y2="434"/>
+  </g>
+
+  <!-- Inner Dark Anodized Aluminum Dial Face -->
+  <circle cx="256" cy="256" r="182" fill="url(#metalDialGrad)"/>
+  <circle cx="256" cy="256" r="182" fill="none" stroke="#121212" stroke-width="6"/>
+
+  <!-- Aperture & Shutter Engraved Scale Ring -->
+  <circle cx="256" cy="256" r="150" fill="none" stroke="#443c2c" stroke-width="1" stroke-dasharray="2,5"/>
+
+  <!-- Vintage Engraved Aperture Numbers Around Bezel -->
+  <g font-family="monospace, -apple-system, sans-serif" font-size="14" font-weight="bold" fill="#f0c05a" text-anchor="middle">
+    <!-- Top f-stops -->
+    <text x="256" y="98">f/16</text>
+    <text x="325" y="112">f/11</text>
+    <text x="378" y="152">f/8</text>
+    <text x="404" y="210">f/5.6</text>
+    <text x="404" y="278">f/4</text>
+    <text x="375" y="338">f/2.8</text>
+    <text x="325" y="380">f/2</text>
+    <text x="256" y="396">f/1.4</text>
+
+    <!-- Left Shutter Speeds -->
+    <text x="187" y="112" fill="#d0cfcb">1/1000</text>
+    <text x="134" y="152" fill="#d0cfcb">1/500</text>
+    <text x="108" y="210" fill="#d0cfcb">1/250</text>
+    <text x="108" y="278" fill="#d0cfcb">1/125</text>
+    <text x="134" y="338" fill="#e86e58">1/60</text>
+    <text x="187" y="380" fill="#e86e58">1/30</text>
+  </g>
+
+  <!-- Center Lens Assembly Outer Brass Stepping -->
+  <circle cx="256" cy="256" r="105" fill="#151310" stroke="url(#brassGrad)" stroke-width="5" filter="url(#dropShadow)"/>
+  <circle cx="256" cy="256" r="95" fill="#0d0c0a" stroke="#2f2b23" stroke-width="2"/>
+
+  <!-- Multi-Coated Camera Glass Element -->
+  <circle cx="256" cy="256" r="86" fill="url(#lensGlass)"/>
+
+  <!-- Aperture Blades (hexagonal iris pattern) -->
+  <g stroke="#d4af37" stroke-width="1.8" opacity="0.65" fill="none">
+    <polygon points="256,206 299,231 299,281 256,306 213,281 213,231"/>
+    <line x1="256" y1="206" x2="310" y2="248"/>
+    <line x1="299" y1="231" x2="280" y2="312"/>
+    <line x1="299" y1="281" x2="226" y2="310"/>
+    <line x1="256" y1="306" x2="202" y2="264"/>
+    <line x1="213" y1="281" x2="232" y2="200"/>
+    <line x1="213" y1="231" x2="286" y2="202"/>
+  </g>
+
+  <!-- Inner Iris Opening (Light Meter Sensor Eye) -->
+  <circle cx="256" cy="256" r="28" fill="#120c02" stroke="#ffb300" stroke-width="2.5"/>
+  <circle cx="256" cy="256" r="14" fill="#ffb300" opacity="0.85" filter="url(#glow)"/>
+
+  <!-- Photocell Center Core -->
+  <circle cx="256" cy="256" r="6" fill="#ffffff"/>
+
+  <!-- Glass Arc Reflection -->
+  <path d="M 195 200 A 75 75 0 0 1 315 200 A 70 65 0 0 0 195 200 Z" fill="url(#glassGlare)"/>
+
+  <!-- Film Perforations Accents (Bottom Left & Right) -->
+  <g fill="#2c271f" stroke="url(#filmBorder)" stroke-width="1.5">
+    <!-- 35mm / 120 film sprocket styling -->
+    <rect x="74" y="416" width="18" height="26" rx="4"/>
+    <rect x="100" y="416" width="18" height="26" rx="4"/>
+    <rect x="394" y="416" width="18" height="26" rx="4"/>
+    <rect x="420" y="416" width="18" height="26" rx="4"/>
+  </g>
+
+  <!-- Brand Typography -->
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" text-anchor="middle">
+    <!-- Top Subtitle -->
+    <text x="256" y="142" font-size="11" font-weight="700" letter-spacing="4" fill="#a89a80">EXPOSURE METER</text>
+    
+    <!-- Bottom Main Label Plaque -->
+    <rect x="176" y="432" width="160" height="28" rx="6" fill="#171512" stroke="#776126" stroke-width="1.5"/>
+    <text x="256" y="451" font-size="14" font-weight="900" letter-spacing="3" fill="#ffd56b">LUXMETER</text>
+  </g>
+</svg>
