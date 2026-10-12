@@ -325,12 +325,12 @@ fun CameraViewfinder(
                   val activeCamera = cameraProvider.bindToLifecycle(lifecycleOwner, selector, group)
                   camera = activeCamera
                   val physicalSize = cameraInfo.getCameraCharacteristic(CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE)
-                  val phoneFocal = cameraInfo.getCameraCharacteristic(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)?.firstOrNull()
+                  val phoneFocals = cameraInfo.getCameraCharacteristic(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)
                   val sensorRotation = cameraInfo.getCameraCharacteristic(CameraCharacteristics.SENSOR_ORIENTATION)
                   val displayRotation = (previewView.display?.rotation ?: Surface.ROTATION_0) * 90
-                  val desiredZoom = if (physicalSize != null && phoneFocal != null && sensorRotation != null) {
+                  val desiredZoom = if (physicalSize != null && sensorRotation != null) {
                     CameraMetering.framingZoom(
-                      focalLengthMm * DepthOfFieldCalculator.getCropFactor(format), phoneFocal,
+                      focalLengthMm * DepthOfFieldCalculator.getCropFactor(format), phoneFocals,
                       physicalSize.width, physicalSize.height, format.aspectRatioFloat,
                       (sensorRotation - displayRotation + 360) % 360
                     )

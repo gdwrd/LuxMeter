@@ -49,9 +49,9 @@ object CameraMetering {
   }
 
   fun regionsMatch(expected: Rect, reported: Rect): Boolean {
-    // Logical-camera lens switches can quantize the same frame to slightly different sensor pixels.
-    val horizontalTolerance = maxOf(2, ceil(expected.width() * 0.001).toInt())
-    val verticalTolerance = maxOf(2, ceil(expected.height() * 0.001).toInt())
+    // Pixel lens switches plus framework clipping can shift the same frame by four sensor pixels.
+    val horizontalTolerance = maxOf(4, ceil(expected.width() * 0.001).toInt())
+    val verticalTolerance = maxOf(4, ceil(expected.height() * 0.001).toInt())
     return abs(expected.left - reported.left) <= horizontalTolerance &&
       abs(expected.right - reported.right) <= horizontalTolerance &&
       abs(expected.top - reported.top) <= verticalTolerance &&
@@ -66,12 +66,14 @@ object CameraMetering {
 
   fun framingZoom(
     filmEquivalentFocalMm: Double,
-    phoneFocalMm: Float,
+    availablePhoneFocalLengths: FloatArray?,
     sensorWidthMm: Float,
     sensorHeightMm: Float,
     frameAspect: Float,
     rotationDegrees: Int
   ): Float? {
+    // shortcut: ambiguous lenses use phone framing until the active 1x lens can be verified.
+    val phoneFocalMm = availablePhoneFocalLengths?.singleOrNull() ?: return null
     if (!filmEquivalentFocalMm.isFinite() || filmEquivalentFocalMm <= 0.0 ||
       !listOf(phoneFocalMm, sensorWidthMm, sensorHeightMm, frameAspect).all { it.isFinite() && it > 0f }
     ) return null

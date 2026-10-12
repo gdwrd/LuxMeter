@@ -80,6 +80,7 @@ fun LightMeterScreen(
   val source by viewModel.measurementSource.collectAsStateWithLifecycle()
   val status by viewModel.readingStatus.collectAsStateWithLifecycle()
   val hasReading by viewModel.hasReading.collectAsStateWithLifecycle()
+  val measuredEv by viewModel.measuredEv100.collectAsStateWithLifecycle()
   val message by viewModel.readingMessage.collectAsStateWithLifecycle()
   val format by viewModel.selectedFormat.collectAsStateWithLifecycle()
   val stock by viewModel.selectedFilmStock.collectAsStateWithLifecycle()
@@ -102,10 +103,13 @@ fun LightMeterScreen(
   val iso = customIso ?: stock?.iso ?: 400
   val held = status == ReadingStatus.HELD
   val aperture = ExposureCalculator.APERTURE_VALUES[apertureIndex]
-  val rawSeconds = ExposureCalculator.SHUTTER_SECONDS[shutterIndex]
-  val correctedSeconds = stock?.calculateCorrectedExposure(rawSeconds) ?: rawSeconds
-  val ev100 = viewModel.computeEv100(lux)
-  val evForIso = viewModel.computeEvForActiveIso(lux)
+  val selectedSeconds = ExposureCalculator.SHUTTER_SECONDS[shutterIndex]
+  val rawSeconds = viewModel.getRawShutterSeconds()
+  val correctedSeconds = viewModel.getCorrectedShutterSeconds()
+  val exposureSupported = rawSeconds != null && correctedSeconds != null
+  val ev100 = if (measuredEv != null) viewModel.computeEv100() else Double.NaN
+  val evDelta = viewModel.getEvDelta()
+  val exposureGuidance = viewModel.getExposureGuidance()
 
   DisposableEffect(lifecycleOwner, viewModel) {
     val observer = LifecycleEventObserver { _, event ->
@@ -211,19 +215,26 @@ fun LightMeterScreen(
       ExposureReadout(
         mode = mode,
         apertureLabel = ExposureCalculator.APERTURE_LABELS[apertureIndex],
-        shutterLabel = ExposureCalculator.formatSeconds(if (mode == ExposureMode.APERTURE_PRIORITY) correctedSeconds else rawSeconds),
-        available = hasReading,
+        shutterLabel = if (mode == ExposureMode.APERTURE_PRIORITY) correctedSeconds?.let(ExposureCalculator::formatSeconds) ?: "—"
+          else ExposureCalculator.formatSeconds(selectedSeconds),
+        available = hasReading && exposureSupported,
         ev100 = ev100,
-        evDelta = ExposureCalculator.calculateEvDelta(apertureIndex, shutterIndex, evForIso),
+        evDelta = evDelta ?: 0.0,
         enabled = !saving,
         onPickAperture = { picker = "aperture" },
         onPickShutter = { picker = "shutter" }
       )
 
-      if (hasReading && mode != ExposureMode.MANUAL_MATCH && abs(ExposureCalculator.calculateEvDelta(apertureIndex, shutterIndex, evForIso)) > 0.6) {
+      if (hasReading && mode != ExposureMode.MANUAL_MATCH && evDelta != null && abs(evDelta) > 0.6) {
         Text("Outside the available exposure range. Choose another aperture or shutter speed.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
       }
-      if (hasReading && rawSeconds >= 1.0) {
+      if (hasReading && !exposureSupported && mode == ExposureMode.APERTURE_PRIORITY && rawSeconds != null) {
+        Text("Metered shutter ${ExposureCalculator.formatSeconds(rawSeconds)} · film correction unavailable", style = MaterialTheme.typography.bodyMedium)
+      }
+      if (hasReading && exposureGuidance != null) {
+        Text(exposureGuidance, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+      }
+      if (hasReading && rawSeconds != null && correctedSeconds != null && correctedSeconds >= 1.0) {
         Row(
           modifier = Modifier.fillMaxWidth(),
           horizontalArrangement = Arrangement.SpaceBetween,
@@ -341,7 +352,7 @@ fun LightMeterScreen(
         if (held && savedEntry == null) {
           OutlinedButton(
             onClick = { viewModel.logExposure() },
-            enabled = ready && !saving,
+            enabled = ready && !saving && exposureSupported,
             modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)
           ) {
             if (saving) {
@@ -379,8 +390,8 @@ fun LightMeterScreen(
   }
   if (showTimer) {
     ExposureTimerDialog(
-      rawSeconds = rawSeconds,
-      correctedSeconds = correctedSeconds,
+      rawSeconds = rawSeconds ?: 0.0,
+      correctedSeconds = correctedSeconds ?: 0.0,
       stockName = stock?.name ?: "ISO $iso",
       hapticManager = viewModel.hapticManager,
       onDismiss = { viewModel.setShowTimerDialog(false) }

@@ -2,11 +2,11 @@ package com.example.sensor
 
 import kotlin.math.abs
 import kotlin.math.log2
-import kotlin.math.pow
 import kotlin.math.roundToInt
-import kotlin.math.sqrt
 
 object ExposureCalculator {
+
+  const val MAX_EXPOSURE_SECONDS = 86_400.0
 
   val APERTURE_VALUES = listOf(
     1.0, 1.2, 1.4, 1.8, 2.0, 2.8, 4.0, 5.6, 8.0, 11.0, 16.0, 22.0, 32.0, 45.0
@@ -38,15 +38,15 @@ object ExposureCalculator {
    * EV100 = log2(Lux / 2.5)
    */
   fun luxToEv100(lux: Float, calibrationOffsetEv: Float = 0f): Double {
-    val safeLux = lux.coerceAtLeast(0.01f)
-    val rawEv = log2(safeLux / 2.5)
-    return (rawEv + calibrationOffsetEv).coerceIn(-4.0, 20.0)
+    require(lux.isFinite() && lux > 0f && calibrationOffsetEv.isFinite())
+    return log2(lux.toDouble() / 2.5) + calibrationOffsetEv
   }
 
   /**
    * Converts EV100 to EV for a specific ISO
    */
   fun ev100ToEvForIso(ev100: Double, iso: Int): Double {
+    require(ev100.isFinite() && iso > 0)
     val isoOffset = log2(iso.toDouble() / 100.0)
     return ev100 + isoOffset
   }
@@ -56,13 +56,14 @@ object ExposureCalculator {
    * t = N^2 / (2^EV_s)
    */
   fun calculateShutterIndexForAperture(apertureIndex: Int, evForIso: Double): Int {
+    require(evForIso.isFinite())
     val n = APERTURE_VALUES[apertureIndex.coerceIn(0, APERTURE_VALUES.lastIndex)]
-    val targetSeconds = (n * n) / 2.0.pow(evForIso)
+    val targetLogSeconds = 2 * log2(n) - evForIso
 
     var closestIdx = 0
     var minDiff = Double.MAX_VALUE
     for (i in SHUTTER_SECONDS.indices) {
-      val diff = abs(log2(SHUTTER_SECONDS[i]) - log2(targetSeconds))
+      val diff = abs(log2(SHUTTER_SECONDS[i]) - targetLogSeconds)
       if (diff < minDiff) {
         minDiff = diff
         closestIdx = i
@@ -75,14 +76,14 @@ object ExposureCalculator {
    * Given a shutter speed and target EV at current ISO, computes closest aperture index.
    * N = sqrt(t * 2^EV_s)
    */
-  fun calculateApertureIndexForShutter(shutterIndex: Int, evForIso: Double): Int {
-    val t = SHUTTER_SECONDS[shutterIndex.coerceIn(0, SHUTTER_SECONDS.lastIndex)]
-    val targetN = sqrt(t * 2.0.pow(evForIso))
+  fun calculateApertureIndexForShutterSeconds(t: Double, evForIso: Double): Int {
+    require(t.isFinite() && t > 0.0 && evForIso.isFinite())
+    val targetLogAperture = (log2(t) + evForIso) / 2
 
     var closestIdx = 0
     var minDiff = Double.MAX_VALUE
     for (i in APERTURE_VALUES.indices) {
-      val diff = abs(log2(APERTURE_VALUES[i]) - log2(targetN.coerceAtLeast(0.5)))
+      val diff = abs(log2(APERTURE_VALUES[i]) - targetLogAperture)
       if (diff < minDiff) {
         minDiff = diff
         closestIdx = i
@@ -96,10 +97,10 @@ object ExposureCalculator {
    * Current EV dial = log2(N^2 / t)
    * EV delta = Current EV dial - target EV
    */
-  fun calculateEvDelta(apertureIndex: Int, shutterIndex: Int, targetEvForIso: Double): Double {
+  fun calculateEvDelta(apertureIndex: Int, shutterSeconds: Double, targetEvForIso: Double): Double {
+    require(shutterSeconds.isFinite() && shutterSeconds > 0.0 && targetEvForIso.isFinite())
     val n = APERTURE_VALUES[apertureIndex]
-    val t = SHUTTER_SECONDS[shutterIndex]
-    val currentSettingEv = log2((n * n) / t)
+    val currentSettingEv = log2((n * n) / shutterSeconds)
     return currentSettingEv - targetEvForIso
   }
 
@@ -126,10 +127,12 @@ object ExposureCalculator {
    * Formats exposure seconds nicely, e.g. "1/250s", "2s", "15.4s"
    */
   fun formatSeconds(sec: Double): String {
+    if (!sec.isFinite() || sec <= 0.0 || sec > MAX_EXPOSURE_SECONDS) return "—"
     return when {
       sec < 0.9 -> {
-        val denom = (1.0 / sec).roundToInt()
-        "1/${denom}s"
+        val standard = SHUTTER_SECONDS.indexOfFirst { abs(it - sec) < 1e-9 }
+        if (standard >= 0) "${SHUTTER_LABELS[standard]}s"
+        else String.format(java.util.Locale.US, "%.3gs", sec)
       }
       sec < 10.0 -> {
         String.format(java.util.Locale.US, "%.1fs", sec)

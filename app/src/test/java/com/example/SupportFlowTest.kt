@@ -4,24 +4,41 @@ import com.example.sensor.ExposureCalculator
 import com.example.ui.components.remainingExposureMillis
 import com.example.ui.sunny16.sunny16ShutterForIso
 import com.example.ui.settings.isValidReciprocityExponent
+import com.example.ui.settings.parseReciprocityExponent
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.math.abs
 import kotlin.math.log2
+import java.util.Locale
 
 class SupportFlowTest {
   @Test
-  fun customReciprocityProfileMustStayFiniteAtLongestMeteredExposure() {
+  fun customReciprocityProfileMustStayWithinOneDayAtLongestMeteredExposure() {
     assertTrue(isValidReciprocityExponent(1.0))
     assertTrue(isValidReciprocityExponent(1.33))
-    assertTrue(isValidReciprocityExponent(100.0))
+    assertTrue(isValidReciprocityExponent(2.5))
+    assertFalse(isValidReciprocityExponent(3.0))
+    assertFalse(isValidReciprocityExponent(100.0))
     assertFalse(isValidReciprocityExponent(1_000.0))
     assertFalse(isValidReciprocityExponent(Double.POSITIVE_INFINITY))
     assertFalse(isValidReciprocityExponent(Double.NaN))
     assertFalse(isValidReciprocityExponent(0.5))
     assertFalse(isValidReciprocityExponent(null))
+  }
+
+  @Test
+  fun reciprocityInputAcceptsLocalDecimalsAndRejectsPartialOrGroupedNumbers() {
+    assertEquals(1.31, parseReciprocityExponent("1,31", Locale.GERMANY)!!, 0.000001)
+    assertEquals(1.31, parseReciprocityExponent("1.31", Locale.US)!!, 0.000001)
+    assertEquals(1.31, parseReciprocityExponent("١٫٣١", Locale.forLanguageTag("ar"))!!, 0.000001)
+    assertNull(parseReciprocityExponent("1.31", Locale.GERMANY))
+    assertNull(parseReciprocityExponent("1,310", Locale.US))
+    assertNull(parseReciprocityExponent("1,31 extra", Locale.GERMANY))
+    assertNull(parseReciprocityExponent("NaN", Locale.US))
+    assertNull(parseReciprocityExponent("", Locale.US))
   }
 
   @Test

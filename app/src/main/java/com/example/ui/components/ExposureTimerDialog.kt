@@ -25,6 +25,7 @@ import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.example.sensor.HapticManager
+import com.example.sensor.ExposureCalculator
 import kotlinx.coroutines.delay
 import java.util.Locale
 import kotlin.math.roundToLong
@@ -41,7 +42,7 @@ fun ExposureTimerDialog(
   val exposureSeconds = rememberSaveable { correctedSeconds }
   val filmName = rememberSaveable { stockName }
   val validDuration = exposureSeconds.isFinite() && exposureSeconds > 0.0 &&
-    exposureSeconds < Long.MAX_VALUE / 1000.0
+    exposureSeconds <= ExposureCalculator.MAX_EXPOSURE_SECONDS
   val totalMillis = if (validDuration) (exposureSeconds * 1000).roundToLong().coerceAtLeast(1000L) else 0L
   var remainingMillis by rememberSaveable { mutableLongStateOf(totalMillis) }
   var remainingAtStart by rememberSaveable { mutableLongStateOf(totalMillis) }
@@ -114,7 +115,7 @@ fun ExposureTimerDialog(
             }) { Text("Reset timer") }
           }
         } else {
-          Text("This exposure cannot be timed. Check the film's long-exposure profile.")
+          Text("This exposure cannot be timed. Choose an exposure of one day or less and check the film's long-exposure profile.")
         }
       }
     },

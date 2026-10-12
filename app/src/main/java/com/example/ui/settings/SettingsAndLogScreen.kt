@@ -13,6 +13,8 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
@@ -31,6 +33,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -48,6 +51,8 @@ import com.example.data.model.FilmStock
 import com.example.sensor.ExposureCalculator
 import com.example.ui.meter.LightMeterViewModel
 import java.text.DateFormat
+import java.text.NumberFormat
+import java.text.ParsePosition
 import java.util.Date
 import java.util.Locale
 import kotlin.math.pow
@@ -231,7 +236,7 @@ private fun FilmLogRow(entry: FilmLogEntry, onDelete: () -> Unit) {
         Text(entry.apertureText + " · " + shutter, style = MaterialTheme.typography.titleLarge)
         if (hasCorrection) {
           Text(
-            "Metered " + entry.shutterText + " · film correction applied",
+            "Metered " + ExposureCalculator.formatSeconds(entry.rawSeconds) + " · film correction applied",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
           )
@@ -261,11 +266,20 @@ fun SettingsScreen(
   onOpenSunny16: () -> Unit = {}
 ) {
   val stocks by viewModel.allStocks.collectAsStateWithLifecycle()
+  val addingFilm by viewModel.isAddingFilm.collectAsStateWithLifecycle()
+  val filmAddedId by viewModel.filmAddedId.collectAsStateWithLifecycle()
   val saving by viewModel.isSaving.collectAsStateWithLifecycle()
   val offset by viewModel.calibrationOffsetEv.collectAsStateWithLifecycle()
   var hapticsEnabled by remember { mutableStateOf(viewModel.hapticManager.isHapticsEnabled) }
   var showAddFilm by rememberSaveable { mutableStateOf(false) }
   var pendingDeleteId by rememberSaveable { mutableStateOf<Int?>(null) }
+
+  LaunchedEffect(filmAddedId) {
+    if (filmAddedId != null) {
+      showAddFilm = false
+      viewModel.clearFilmAddedReceipt()
+    }
+  }
 
   Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
     LazyColumn(
@@ -317,7 +331,10 @@ fun SettingsScreen(
       item {
         Row(verticalAlignment = Alignment.CenterVertically) {
           Text("Film library", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
-          TextButton(onClick = { showAddFilm = true }) {
+          TextButton(onClick = {
+            viewModel.clearFilmAddedReceipt()
+            showAddFilm = true
+          }) {
             Icon(Icons.Default.Add, contentDescription = null)
             Text("Add film", Modifier.padding(start = 4.dp))
           }
@@ -349,11 +366,9 @@ fun SettingsScreen(
 
   if (showAddFilm) {
     AddFilmDialog(
+      saving = addingFilm,
       onDismiss = { showAddFilm = false },
-      onAdd = { film ->
-        viewModel.addCustomFilmStock(film)
-        showAddFilm = false
-      }
+      onAdd = viewModel::addCustomFilmStock
     )
   }
 
@@ -374,46 +389,47 @@ fun SettingsScreen(
 }
 
 @Composable
-private fun AddFilmDialog(onDismiss: () -> Unit, onAdd: (FilmStock) -> Unit) {
+private fun AddFilmDialog(saving: Boolean, onDismiss: () -> Unit, onAdd: (FilmStock) -> Unit) {
   var name by rememberSaveable { mutableStateOf("") }
   var brand by rememberSaveable { mutableStateOf("") }
   var isoText by rememberSaveable { mutableStateOf("400") }
-  var exponentText by rememberSaveable { mutableStateOf("1.25") }
+  var exponentText by rememberSaveable { mutableStateOf(NumberFormat.getNumberInstance().format(1.25)) }
   val iso = isoText.toIntOrNull()
-  val exponent = exponentText.toDoubleOrNull()
+  val exponent = parseReciprocityExponent(exponentText)
   val isoValid = iso != null && iso in 1..12800
   val exponentValid = isValidReciprocityExponent(exponent)
 
   AlertDialog(
-    onDismissRequest = onDismiss,
+    onDismissRequest = { if (!saving) onDismiss() },
     title = { Text("Add film") },
     text = {
-      LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item { OutlinedTextField(name, { name = it }, label = { Text("Film name") }, singleLine = true) }
-        item { OutlinedTextField(brand, { brand = it }, label = { Text("Brand (optional)") }, singleLine = true) }
-        item {
-          OutlinedTextField(
-            isoText, { isoText = it }, label = { Text("Box ISO") }, singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            isError = !isoValid,
-            supportingText = { if (!isoValid) Text("Enter an ISO from 1 to 12,800.") }
-          )
-        }
-        item {
-          OutlinedTextField(
-            exponentText, { exponentText = it }, label = { Text("Reciprocity exponent") }, singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-            isError = !exponentValid,
-            supportingText = { Text(if (exponentValid) "Use the film maker's value for tᵖ. Use 1 for no correction." else "Enter an exponent of 1 or greater that keeps long exposures within range.") }
-          )
-        }
+      Column(
+        modifier = Modifier.verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+      ) {
+        OutlinedTextField(name, { name = it }, label = { Text("Film name") }, singleLine = true, enabled = !saving)
+        OutlinedTextField(brand, { brand = it }, label = { Text("Brand (optional)") }, singleLine = true, enabled = !saving)
+        OutlinedTextField(
+          isoText, { isoText = it }, label = { Text("Box ISO") }, singleLine = true, enabled = !saving,
+          keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+          isError = !isoValid,
+          supportingText = if (isoValid) null else {
+            { Text("Enter an ISO from 1 to 12,800.") }
+          }
+        )
+        OutlinedTextField(
+          exponentText, { exponentText = it }, label = { Text("Reciprocity exponent") }, singleLine = true, enabled = !saving,
+          keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+          isError = !exponentValid,
+          supportingText = { Text(if (exponentValid) "Use the film maker's value for tᵖ. Use 1 for no correction." else "Use an exponent of at least 1 that keeps a 60-second exposure within one day.") }
+        )
       }
     },
     confirmButton = {
       TextButton(
-        enabled = name.isNotBlank() && isoValid && exponentValid,
+        enabled = !saving && name.isNotBlank() && isoValid && exponentValid,
         onClick = {
-          if (name.isNotBlank() && isoValid && exponentValid) {
+          if (!saving && name.isNotBlank() && isoValid && exponentValid) {
             onAdd(FilmStock(
               name = name.trim(),
               brand = brand.trim().ifBlank { "Custom" },
@@ -426,12 +442,20 @@ private fun AddFilmDialog(onDismiss: () -> Unit, onAdd: (FilmStock) -> Unit) {
             ))
           }
         }
-      ) { Text("Save film") }
+      ) { Text(if (saving) "Saving film…" else "Save film") }
     },
-    dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    dismissButton = { TextButton(onClick = onDismiss, enabled = !saving) { Text("Cancel") } }
   )
 }
 
 internal fun isValidReciprocityExponent(exponent: Double?): Boolean =
   exponent != null && exponent.isFinite() && exponent >= 1.0 &&
-    ExposureCalculator.SHUTTER_SECONDS.max().pow(exponent).isFinite()
+    ExposureCalculator.SHUTTER_SECONDS.max().pow(exponent) <= ExposureCalculator.MAX_EXPOSURE_SECONDS
+
+internal fun parseReciprocityExponent(text: String, locale: Locale = Locale.getDefault()): Double? {
+  val input = text.trim()
+  val format = NumberFormat.getNumberInstance(locale).apply { isGroupingUsed = false }
+  val position = ParsePosition(0)
+  val number = format.parse(input, position)?.toDouble() ?: return null
+  return number.takeIf { position.index == input.length && it.isFinite() }
+}

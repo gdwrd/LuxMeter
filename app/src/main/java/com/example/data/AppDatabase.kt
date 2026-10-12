@@ -1,6 +1,8 @@
 package com.example.data
 
 import android.content.Context
+import android.content.ContentValues
+import android.database.sqlite.SQLiteDatabase
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
@@ -9,9 +11,6 @@ import com.example.data.dao.FilmLogDao
 import com.example.data.dao.FilmStockDao
 import com.example.data.model.FilmLogEntry
 import com.example.data.model.FilmStock
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 
 @Database(
   entities = [FilmStock::class, FilmLogEntry::class],
@@ -26,40 +25,31 @@ abstract class AppDatabase : RoomDatabase() {
     @Volatile
     private var INSTANCE: AppDatabase? = null
 
-    fun getDatabase(context: Context, scope: CoroutineScope): AppDatabase {
+    fun getDatabase(context: Context): AppDatabase {
       return INSTANCE ?: synchronized(this) {
+        INSTANCE?.let { return@synchronized it }
         val instance = Room.databaseBuilder(
           context.applicationContext,
           AppDatabase::class.java,
           "luxmeter_analog.db"
         )
-        .addCallback(DatabaseCallback(scope))
+        .addCallback(DatabaseCallback())
         .build()
         INSTANCE = instance
         instance
       }
     }
 
-    private class DatabaseCallback(
-      private val scope: CoroutineScope
-    ) : RoomDatabase.Callback() {
-      override fun onCreate(db: SupportSQLiteDatabase) {
-        super.onCreate(db)
-        INSTANCE?.let { database ->
-          scope.launch(Dispatchers.IO) {
-            populateInitialStocks(database.filmStockDao())
-          }
-        }
-      }
-
-      suspend fun populateInitialStocks(dao: FilmStockDao) {
+    internal class DatabaseCallback : RoomDatabase.Callback() {
+      override fun onOpen(db: SupportSQLiteDatabase) {
+        super.onOpen(db)
         val initialStocks = listOf(
           FilmStock(
             name = "Portra 400",
             brand = "Kodak",
             iso = 400,
             type = "Color Negative",
-            reciprocityFactor = 1.22,
+            reciprocityFactor = 1.0,
             description = "Iconic warm skin tones, fine grain, and exceptional exposure latitude.",
             badgeStyle = "PORTRA"
           ),
@@ -68,7 +58,8 @@ abstract class AppDatabase : RoomDatabase() {
             brand = "Kodak",
             iso = 400,
             type = "Black & White",
-            reciprocityFactor = 1.30,
+            reciprocityFactor = 1.0,
+            reciprocityThresholdSec = 0.1,
             description = "Legendary photojournalism film, classic gritty grain and deep blacks.",
             badgeStyle = "TRI_X"
           ),
@@ -86,7 +77,7 @@ abstract class AppDatabase : RoomDatabase() {
             brand = "Kodak",
             iso = 200,
             type = "Color Negative",
-            reciprocityFactor = 1.24,
+            reciprocityFactor = 1.0,
             description = "Warm golden nostalgic aesthetic, saturated colors, great daylight stock.",
             badgeStyle = "GOLD"
           ),
@@ -95,7 +86,7 @@ abstract class AppDatabase : RoomDatabase() {
             brand = "CineStill",
             iso = 800,
             type = "Tungsten Cine",
-            reciprocityFactor = 1.20,
+            reciprocityFactor = 1.30,
             description = "Motion picture cinema emulsion, unique red halation glow around point lights.",
             badgeStyle = "CINESTILL"
           ),
@@ -104,7 +95,7 @@ abstract class AppDatabase : RoomDatabase() {
             brand = "Fujifilm",
             iso = 50,
             type = "Color Slide",
-            reciprocityFactor = 1.15,
+            reciprocityFactor = 1.0,
             description = "High saturation, ultra-fine grain reversal slide film for landscapes.",
             badgeStyle = "FUJI_VELVIA"
           ),
@@ -113,7 +104,8 @@ abstract class AppDatabase : RoomDatabase() {
             brand = "Fujifilm",
             iso = 400,
             type = "Color Negative",
-            reciprocityFactor = 1.25,
+            reciprocityFactor = 1.0,
+            reciprocityThresholdSec = 2.0,
             description = "Punchy greens and accurate whites, great all-around snapshot film.",
             badgeStyle = "FUJI_SUPERIA"
           ),
@@ -122,7 +114,7 @@ abstract class AppDatabase : RoomDatabase() {
             brand = "Kodak",
             iso = 100,
             type = "Color Negative",
-            reciprocityFactor = 1.22,
+            reciprocityFactor = 1.0,
             description = "Finest grain color negative in the world, vivid saturation for travel & nature.",
             badgeStyle = "EKTAR"
           ),
@@ -136,7 +128,35 @@ abstract class AppDatabase : RoomDatabase() {
             badgeStyle = "DELTA"
           )
         )
-        dao.insertAllStocks(initialStocks)
+        // Repair old/empty installs before Room serves queries, without a ViewModel lifetime race.
+        db.beginTransaction()
+        try {
+          for (stock in initialStocks) {
+            val profile = ContentValues().apply {
+              put("reciprocityFactor", stock.reciprocityFactor)
+              put("reciprocityThresholdSec", stock.reciprocityThresholdSec)
+            }
+            val updated = db.update(
+              "film_stocks", SQLiteDatabase.CONFLICT_ABORT, profile,
+              "name = ? AND brand = ? AND isCustom = 0", arrayOf(stock.name, stock.brand)
+            )
+            if (updated == 0) {
+              val values = ContentValues(profile).apply {
+                put("name", stock.name)
+                put("brand", stock.brand)
+                put("iso", stock.iso)
+                put("type", stock.type)
+                put("description", stock.description)
+                put("badgeStyle", stock.badgeStyle)
+                put("isCustom", false)
+              }
+              db.insert("film_stocks", SQLiteDatabase.CONFLICT_ABORT, values)
+            }
+          }
+          db.setTransactionSuccessful()
+        } finally {
+          db.endTransaction()
+        }
       }
     }
   }

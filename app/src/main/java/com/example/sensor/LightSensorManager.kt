@@ -8,7 +8,6 @@ import android.hardware.SensorManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlin.math.abs
 
 class LightSensorManager(context: Context) : SensorEventListener {
 
@@ -25,9 +24,6 @@ class LightSensorManager(context: Context) : SensorEventListener {
 
   private val _isLocked = MutableStateFlow(false)
   val isLocked: StateFlow<Boolean> = _isLocked.asStateFlow()
-
-  private var smoothedLux: Float? = null
-  private val smoothingFactor = 0.25f
 
   fun start(): Boolean {
     if (lightSensor != null && !_isLocked.value) {
@@ -50,7 +46,6 @@ class LightSensorManager(context: Context) : SensorEventListener {
   }
 
   fun resetReadings() {
-    smoothedLux = null
     _readings.value = null
   }
 
@@ -63,14 +58,8 @@ class LightSensorManager(context: Context) : SensorEventListener {
     if (event?.sensor?.type == Sensor.TYPE_LIGHT) {
       val rawLux = event.values.firstOrNull() ?: return
       if (rawLux.isFinite() && rawLux >= 0f) {
-        val previous = smoothedLux
-        val nextLux = if (previous == null || abs(rawLux - previous) > 200f) {
-          rawLux // Fast transition on drastic light change
-        } else {
-          previous + smoothingFactor * (rawLux - previous)
-        }
-        smoothedLux = nextLux
-        _readings.value = nextLux
+        // Light sensors report changes, so stable light may never produce another event.
+        _readings.value = rawLux
       }
     }
   }

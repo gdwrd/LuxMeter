@@ -84,6 +84,15 @@ class CameraMeteringTest {
   }
 
   @Test
+  fun `Pixel macro lens quantization also matches a narrow 35mm crop`() {
+    val requested = Rect(1000, 1, 2999, 3000)
+    val reported = Rect(997, 0, 2997, 2996)
+    assertTrue(CameraMetering.regionsMatch(requested, reported))
+    assertFalse(CameraMetering.needsRegionUpdate(requested, reported))
+    assertFalse(CameraMetering.regionsMatch(requested, Rect(990, 0, 2989, 2996)))
+  }
+
+  @Test
   fun `brief adjustment after a long live session does not immediately time out`() {
     val regionRequestedMs = 1_000L
     val lastValidatedReadingMs = 20_000L
@@ -94,10 +103,17 @@ class CameraMeteringTest {
 
   @Test
   fun `lens framing accounts for the rotated film crop without an assumed phone focal length`() {
-    val landscape = CameraMetering.framingZoom(50.0, 4f, 6f, 4f, 1.5f, 0)!!
-    val portrait = CameraMetering.framingZoom(50.0, 4f, 6f, 4f, 1.5f, 90)!!
+    val landscape = CameraMetering.framingZoom(50.0, floatArrayOf(4f), 6f, 4f, 1.5f, 0)!!
+    val portrait = CameraMetering.framingZoom(50.0, floatArrayOf(4f), 6f, 4f, 1.5f, 90)!!
     assertEquals(50f / 24f, landscape, 0.0001f)
     assertTrue(portrait < landscape)
-    assertNull(CameraMetering.framingZoom(50.0, 0f, 6f, 4f, 1.5f, 0))
+    assertNull(CameraMetering.framingZoom(50.0, floatArrayOf(0f), 6f, 4f, 1.5f, 0))
+  }
+
+  @Test
+  fun `ambiguous or missing phone lens metadata cannot claim film focal length framing`() {
+    assertNull(CameraMetering.framingZoom(50.0, floatArrayOf(2f, 4f), 6f, 4f, 1.5f, 0))
+    assertNull(CameraMetering.framingZoom(50.0, floatArrayOf(), 6f, 4f, 1.5f, 0))
+    assertNull(CameraMetering.framingZoom(50.0, null, 6f, 4f, 1.5f, 0))
   }
 }

@@ -22,8 +22,8 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import java.util.UUID
-import kotlin.math.roundToInt
 import kotlin.math.log2
+import kotlin.math.abs
 
 enum class ExposureMode(val label: String, val description: String) {
   APERTURE_PRIORITY("A", "Aperture Priority — turn Aperture, meter sets Shutter"),
@@ -40,13 +40,15 @@ class LightMeterViewModel @JvmOverloads constructor(
 ) : AndroidViewModel(application) {
 
   private val preferences = application.getSharedPreferences("meter_setup", Context.MODE_PRIVATE)
-  private val repository = repositoryOverride ?: AppDatabase.getDatabase(application, viewModelScope).let {
+  private val deviceCalibration = application.getSharedPreferences("meter_device_calibration", Context.MODE_PRIVATE)
+  private val repository = repositoryOverride ?: AppDatabase.getDatabase(application).let {
     FilmRepository(it.filmStockDao(), it.filmLogDao())
   }
   val sensorManager = LightSensorManager(application)
   val hapticManager = HapticManager(application)
   private var meteringActive = true
-  private var rawEv100: Double? = null
+  private val rawEv100 = MutableStateFlow<Double?>(null)
+  val measuredEv100 = rawEv100.asStateFlow()
 
   private val _measurementSource = MutableStateFlow(MeasurementSource.CAMERA)
   val measurementSource = _measurementSource.asStateFlow()
@@ -60,6 +62,10 @@ class LightMeterViewModel @JvmOverloads constructor(
   val savedEntry = _savedEntry.asStateFlow()
   private val _isSaving = MutableStateFlow(false)
   val isSaving = _isSaving.asStateFlow()
+  private val _isAddingFilm = MutableStateFlow(false)
+  val isAddingFilm = _isAddingFilm.asStateFlow()
+  private val _filmAddedId = MutableStateFlow<Int?>(null)
+  val filmAddedId = _filmAddedId.asStateFlow()
   private val _setupReady = MutableStateFlow(false)
   val setupReady = _setupReady.asStateFlow()
 
@@ -101,7 +107,7 @@ class LightMeterViewModel @JvmOverloads constructor(
     .coerceIn(0, ExposureCalculator.SHUTTER_SECONDS.lastIndex))
   val selectedShutterIndex: StateFlow<Int> = _selectedShutterIndex.asStateFlow()
 
-  private val _calibrationOffsetEv = MutableStateFlow(preferences.getFloat("calibration", 0f)
+  private val _calibrationOffsetEv = MutableStateFlow(deviceCalibration.getFloat("calibration", 0f)
     .takeIf { it.isFinite() }?.coerceIn(-3f, 3f) ?: 0f)
   val calibrationOffsetEv: StateFlow<Float> = _calibrationOffsetEv.asStateFlow()
 
@@ -145,11 +151,12 @@ class LightMeterViewModel @JvmOverloads constructor(
   fun setFocalLength(mm: Int) {
     if (sensorManager.isLocked.value || _isSaving.value || mm !in 10..1000 || mm == _focalLengthMm.value) return
     _focalLengthMm.value = mm
-    invalidateReading()
+    if (_measurementSource.value == MeasurementSource.CAMERA) invalidateReading()
     persistSetup()
   }
 
   fun setFocusDistance(meters: Double) {
+    if (!meters.isFinite()) return
     _focusDistanceMeters.value = meters.coerceAtLeast(0.3)
   }
 
@@ -165,7 +172,7 @@ class LightMeterViewModel @JvmOverloads constructor(
       _focusDistanceMeters.value,
       _selectedFormat.value
     )
-    _focusDistanceMeters.value = ((dof.hyperfocalMeters * 10).roundToInt() / 10.0).coerceAtLeast(0.5)
+    _focusDistanceMeters.value = dof.hyperfocalMeters
     _userMessage.value = "Focus set to Hyperfocal: ${DepthOfFieldCalculator.formatDistance(dof.hyperfocalMeters)}"
   }
 
@@ -185,11 +192,19 @@ class LightMeterViewModel @JvmOverloads constructor(
 
   init {
     hapticManager.isHapticsEnabled = preferences.getBoolean("haptics", true)
+    // The old backed-up offset cannot be identified as belonging to this phone.
+    if (preferences.contains("calibration")) {
+      if (preferences.getFloat("calibration", 0f) != 0f) {
+        _userMessage.value = "Calibration reset for this phone. Compare with a reference meter to recalibrate."
+      }
+      preferences.edit().remove("calibration").apply()
+    }
     viewModelScope.launch {
       try {
         _selectedFilmStock.value = preferences.getInt("stock_id", -1)
           .takeIf { it >= 0 }?.let { repository.getFilmStock(it) }
-        _activeRollFrameCount.value = repository.getLatestEntryForRoll(_currentRollId.value)?.frameNumber ?: 0
+        _activeRollFrameCount.value = maxOf(preferences.getInt("roll_frame_count", 0),
+          repository.getLatestEntryForRoll(_currentRollId.value)?.frameNumber ?: 0)
         _setupReady.value = true
         persistSetup()
       } catch (error: Exception) {
@@ -211,30 +226,30 @@ class LightMeterViewModel @JvmOverloads constructor(
       .putInt("iso", activeIso)
       .putString("format", _selectedFormat.value.name)
       .putInt("focal_length", _focalLengthMm.value)
-      .putFloat("calibration", _calibrationOffsetEv.value)
       .putString("mode", _exposureMode.value.name)
       .putInt("aperture", _selectedApertureIndex.value)
       .putInt("shutter", _selectedShutterIndex.value)
       .putString("roll_id", _currentRollId.value)
       .putString("roll_name", _currentRollName.value)
+      .putInt("roll_frame_count", _activeRollFrameCount.value)
       .putBoolean("haptics", hapticManager.isHapticsEnabled)
       .apply()
   }
 
   private fun invalidateReading() {
-    rawEv100 = null
+    rawEv100.value = null
     _hasReading.value = false
     _readingStatus.value = ReadingStatus.WAITING
     _readingMessage.value = null
     _savedEntry.value = null
   }
 
-  private fun acceptReading(ev100: Double) {
+  private fun acceptReading(ev100: Double, measuredLux: Float? = null) {
     if ((!meteringActive && _measurementSource.value != MeasurementSource.SUNNY_16) ||
-      sensorManager.isLocked.value || !ev100.isFinite() || ev100 !in -20.0..30.0) return
-    rawEv100 = ev100
+      sensorManager.isLocked.value || !ev100.isFinite()) return
+    rawEv100.value = ev100
     _hasReading.value = true
-    sensorManager.setManualLux((2.5 * Math.pow(2.0, ev100)).toFloat())
+    sensorManager.setManualLux(measuredLux ?: (2.5 * Math.pow(2.0, ev100)).toFloat())
     recalculateForMode()
     _readingMessage.value = null
     _readingStatus.value = ReadingStatus.LIVE
@@ -242,7 +257,15 @@ class LightMeterViewModel @JvmOverloads constructor(
 
   internal fun onSensorLuxMeasured(lux: Float) {
     if (_measurementSource.value != MeasurementSource.SENSOR || !lux.isFinite() || lux < 0f) return
-    acceptReading(ExposureCalculator.luxToEv100(lux))
+    if (lux == 0f) {
+      if (!sensorManager.isLocked.value && meteringActive) {
+        invalidateReading()
+        _readingStatus.value = ReadingStatus.UNAVAILABLE
+        _readingMessage.value = "Light is below this sensor's measuring range."
+      }
+      return
+    }
+    acceptReading(ExposureCalculator.luxToEv100(lux), lux)
   }
 
   fun setMeasurementSource(source: MeasurementSource) {
@@ -290,35 +313,49 @@ class LightMeterViewModel @JvmOverloads constructor(
   }
 
   // Computed properties
-  fun computeEv100(lux: Float): Double {
+  fun computeEv100(): Double {
     val offset = if (_measurementSource.value == MeasurementSource.SUNNY_16) 0f else _calibrationOffsetEv.value
-    return ExposureCalculator.luxToEv100(lux, offset)
+    return (rawEv100.value ?: Double.NaN) + offset
   }
 
-  fun computeEvForActiveIso(lux: Float): Double {
-    val ev100 = computeEv100(lux)
+  fun computeEvForActiveIso(): Double {
+    val ev100 = computeEv100()
+    if (!ev100.isFinite()) return Double.NaN
     return ExposureCalculator.ev100ToEvForIso(ev100, activeIso)
   }
 
-  fun getRawShutterSeconds(): Double {
-    return ExposureCalculator.SHUTTER_SECONDS[_selectedShutterIndex.value]
+  fun getRawShutterSeconds(): Double? {
+    val selected = ExposureCalculator.SHUTTER_SECONDS[_selectedShutterIndex.value]
+    val stock = _selectedFilmStock.value
+    return if (_exposureMode.value == ExposureMode.APERTURE_PRIORITY || stock == null) selected
+      else stock.calculateMeteredExposure(selected)
   }
 
-  fun getCorrectedShutterSeconds(): Double {
-    val raw = getRawShutterSeconds()
+  fun getCorrectedShutterSeconds(): Double? {
+    val raw = getRawShutterSeconds() ?: return null
     val stock = _selectedFilmStock.value
-    return stock?.calculateCorrectedExposure(raw) ?: raw
+    return if (_exposureMode.value != ExposureMode.APERTURE_PRIORITY) ExposureCalculator.SHUTTER_SECONDS[_selectedShutterIndex.value]
+      else if (stock == null) raw else stock.calculateCorrectedExposure(raw)
   }
+
+  fun getEvDelta(): Double? {
+    val seconds = getRawShutterSeconds() ?: return null
+    val ev = computeEvForActiveIso()
+    return if (ev.isFinite()) ExposureCalculator.calculateEvDelta(_selectedApertureIndex.value, seconds, ev) else null
+  }
+
+  fun getExposureGuidance(): String? = _selectedFilmStock.value?.reciprocityGuidance(
+    getRawShutterSeconds() ?: ExposureCalculator.SHUTTER_SECONDS[_selectedShutterIndex.value])
 
   fun isLongExposure(): Boolean {
-    return getRawShutterSeconds() >= 1.0
+    return (getCorrectedShutterSeconds() ?: 0.0) >= 1.0
   }
 
   fun setFormat(format: CameraFormat) {
     if (sensorManager.isLocked.value || _isSaving.value || format == _selectedFormat.value) return
     _selectedFormat.value = format
     _focalLengthMm.value = DepthOfFieldCalculator.getDefaultFocalLength(format)
-    invalidateReading()
+    if (_measurementSource.value == MeasurementSource.CAMERA) invalidateReading()
     persistSetup()
   }
 
@@ -356,15 +393,27 @@ class LightMeterViewModel @JvmOverloads constructor(
   }
 
   fun setExposureMode(mode: ExposureMode) {
-    if (_isSaving.value) return
+    if (_isSaving.value || mode == _exposureMode.value) return
+    val wasAperture = _exposureMode.value == ExposureMode.APERTURE_PRIORITY
+    if (wasAperture != (mode == ExposureMode.APERTURE_PRIORITY)) {
+      val seconds = if (wasAperture) getCorrectedShutterSeconds() else getRawShutterSeconds()
+      if (seconds != null) {
+        _selectedShutterIndex.value = ExposureCalculator.SHUTTER_SECONDS.indices.minBy {
+          abs(log2(ExposureCalculator.SHUTTER_SECONDS[it]) - log2(seconds))
+        }
+        if (wasAperture && seconds > ExposureCalculator.SHUTTER_SECONDS.last()) {
+          _userMessage.value = "This exposure exceeds the selectable shutter range. Use aperture priority and the timer."
+        }
+      }
+    }
     _exposureMode.value = mode
     recalculateForMode()
     persistSetup()
   }
 
   fun recalculateForMode() {
-    if (rawEv100 == null) return
-    val evForIso = computeEvForActiveIso(sensorManager.lux.value)
+    if (rawEv100.value == null) return
+    val evForIso = computeEvForActiveIso()
     when (_exposureMode.value) {
       ExposureMode.APERTURE_PRIORITY -> {
         val newShutterIdx = ExposureCalculator.calculateShutterIndexForAperture(
@@ -374,8 +423,9 @@ class LightMeterViewModel @JvmOverloads constructor(
         _selectedShutterIndex.value = newShutterIdx
       }
       ExposureMode.SHUTTER_PRIORITY -> {
-        val newApertureIdx = ExposureCalculator.calculateApertureIndexForShutter(
-          _selectedShutterIndex.value,
+        val seconds = getRawShutterSeconds() ?: return
+        val newApertureIdx = ExposureCalculator.calculateApertureIndexForShutterSeconds(
+          seconds,
           evForIso
         )
         _selectedApertureIndex.value = newApertureIdx
@@ -423,7 +473,7 @@ class LightMeterViewModel @JvmOverloads constructor(
     setApertureDirectly(apertureLabel)
     setShutterDirectly(shutterLabel)
     val aperture = ExposureCalculator.APERTURE_VALUES[_selectedApertureIndex.value]
-    val seconds = getRawShutterSeconds()
+    val seconds = ExposureCalculator.SHUTTER_SECONDS[_selectedShutterIndex.value]
     setPresetEv100(log2(aperture * aperture / seconds) - log2(iso / 100.0))
     persistSetup()
     _userMessage.value = "Sunny 16 applied: $apertureLabel at $shutterLabel (ISO $iso)"
@@ -447,7 +497,7 @@ class LightMeterViewModel @JvmOverloads constructor(
           startSensor()
         }
       }
-    } else if (_readingStatus.value == ReadingStatus.LIVE && rawEv100 != null) {
+    } else if (_readingStatus.value == ReadingStatus.LIVE && rawEv100.value != null) {
       sensorManager.setLocked(true)
       _readingStatus.value = ReadingStatus.HELD
     }
@@ -467,16 +517,16 @@ class LightMeterViewModel @JvmOverloads constructor(
 
   fun logExposure(notes: String = "") {
     if (!_setupReady.value || _isSaving.value || _savedEntry.value != null ||
-      _readingStatus.value != ReadingStatus.HELD || rawEv100 == null) return
+      _readingStatus.value != ReadingStatus.HELD || rawEv100.value == null) return
     val nextFrame = _activeRollFrameCount.value + 1
     val format = _selectedFormat.value
     val apertureStr = ExposureCalculator.APERTURE_LABELS[_selectedApertureIndex.value]
     val shutterStr = ExposureCalculator.SHUTTER_LABELS[_selectedShutterIndex.value]
     val stock = _selectedFilmStock.value
     val stockName = stock?.name ?: "Custom (ISO $activeIso)"
-    val rawSec = getRawShutterSeconds()
-    val corrSec = getCorrectedShutterSeconds()
-    val evVal = computeEvForActiveIso(sensorManager.lux.value)
+    val rawSec = getRawShutterSeconds() ?: return
+    val corrSec = getCorrectedShutterSeconds() ?: return
+    val evVal = computeEvForActiveIso()
 
     val entry = FilmLogEntry(
       rollId = _currentRollId.value,
@@ -517,8 +567,9 @@ class LightMeterViewModel @JvmOverloads constructor(
     viewModelScope.launch {
       try {
         repository.deleteLogEntry(entry.id)
-        _activeRollFrameCount.value = repository.getLatestEntryForRoll(_currentRollId.value)?.frameNumber ?: 0
+        if (entry.frameNumber == _activeRollFrameCount.value) _activeRollFrameCount.value -= 1
         _savedEntry.value = null
+        persistSetup()
         _userMessage.value = "Frame ${entry.frameNumber} removed."
       } catch (error: Exception) {
         if (error is CancellationException) throw error
@@ -545,7 +596,6 @@ class LightMeterViewModel @JvmOverloads constructor(
     viewModelScope.launch {
       try {
         repository.deleteLogEntry(id)
-        _activeRollFrameCount.value = repository.getLatestEntryForRoll(_currentRollId.value)?.frameNumber ?: 0
         if (_savedEntry.value?.id == id) _savedEntry.value = null
       } catch (error: Exception) {
         if (error is CancellationException) throw error
@@ -574,16 +624,23 @@ class LightMeterViewModel @JvmOverloads constructor(
   }
 
   fun addCustomFilmStock(stock: FilmStock) {
+    if (_isAddingFilm.value) return
+    _isAddingFilm.value = true
+    _filmAddedId.value = null
     viewModelScope.launch {
       try {
-        repository.insertStock(stock)
+        _filmAddedId.value = repository.insertStock(stock).toInt()
         _userMessage.value = "Added stock: ${stock.name}"
       } catch (error: Exception) {
         if (error is CancellationException) throw error
         _userMessage.value = "Could not add the film. Try again."
+      } finally {
+        _isAddingFilm.value = false
       }
     }
   }
+
+  fun clearFilmAddedReceipt() { _filmAddedId.value = null }
 
   fun deleteFilmStock(id: Int) {
     viewModelScope.launch {
@@ -591,6 +648,7 @@ class LightMeterViewModel @JvmOverloads constructor(
         repository.deleteStock(id)
         if (_selectedFilmStock.value?.id == id) {
           _selectedFilmStock.value = null
+          recalculateForMode()
           persistSetup()
         }
       } catch (error: Exception) {
@@ -603,6 +661,7 @@ class LightMeterViewModel @JvmOverloads constructor(
   fun setCalibrationOffset(offset: Float) {
     if (_isSaving.value || !offset.isFinite()) return
     _calibrationOffsetEv.value = offset.coerceIn(-3f, 3f)
+    deviceCalibration.edit().putFloat("calibration", _calibrationOffsetEv.value).apply()
     recalculateForMode()
     persistSetup()
   }

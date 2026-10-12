@@ -45,6 +45,7 @@ class LightMeterViewModelTest {
     Dispatchers.setMain(dispatcher)
     application = ApplicationProvider.getApplicationContext()
     application.getSharedPreferences("meter_setup", Context.MODE_PRIVATE).edit().clear().commit()
+    application.getSharedPreferences("meter_device_calibration", Context.MODE_PRIVATE).edit().clear().commit()
   }
 
   @After fun tearDown() {
@@ -75,7 +76,7 @@ class LightMeterViewModelTest {
     assertEquals(ReadingStatus.WAITING, model.readingStatus.value)
     model.onOpticalEvMeasured(14.0)
     model.setCameraStatus(null)
-    assertEquals(15.0, model.computeEv100(model.sensorManager.lux.value), 0.001)
+    assertEquals(15.0, model.computeEv100(), 0.001)
     assertEquals("1/125", ExposureCalculator.SHUTTER_LABELS[model.selectedShutterIndex.value])
 
     model.toggleHold()
@@ -85,7 +86,7 @@ class LightMeterViewModelTest {
     model.setFocalLength(85)
     model.setCameraStatus("Camera unavailable")
     assertEquals(ReadingStatus.HELD, model.readingStatus.value)
-    assertEquals(15.0, model.computeEv100(model.sensorManager.lux.value), 0.001)
+    assertEquals(15.0, model.computeEv100(), 0.001)
     assertEquals(CameraFormat.FORMAT_35MM, model.selectedFormat.value)
     assertEquals(50, model.focalLengthMm.value)
 
@@ -122,7 +123,7 @@ class LightMeterViewModelTest {
     assertNotEquals(ReadingStatus.LIVE, model.readingStatus.value)
     model.onSensorLuxMeasured(81920f)
     assertEquals(ReadingStatus.LIVE, model.readingStatus.value)
-    assertEquals(15.0, model.computeEv100(model.sensorManager.lux.value), 0.001)
+    assertEquals(15.0, model.computeEv100(), 0.001)
     model.setMeasurementSource(MeasurementSource.CAMERA)
     model.setCameraStatus("Camera permission required")
     assertEquals(ReadingStatus.UNAVAILABLE, model.readingStatus.value)
@@ -139,7 +140,7 @@ class LightMeterViewModelTest {
     assertTrue(model.hasReading.value)
     assertEquals(ReadingStatus.WAITING, model.readingStatus.value)
     assertEquals(shutter, model.selectedShutterIndex.value)
-    assertEquals(12.0, model.computeEv100(model.sensorManager.lux.value), 0.001)
+    assertEquals(12.0, model.computeEv100(), 0.001)
     model.toggleHold()
     assertFalse(model.sensorManager.isLocked.value)
     model.onOpticalEvMeasured(13.0)
@@ -183,7 +184,7 @@ class LightMeterViewModelTest {
     assertEquals(model.currentRollId.value, restored.currentRollId.value)
     assertEquals("Autumn", restored.currentRollName.value)
     assertEquals(1, restored.activeRollFrameCount.value)
-    assertTrue(restored.getCorrectedShutterSeconds() > restored.getRawShutterSeconds())
+    assertTrue(restored.getCorrectedShutterSeconds()!! > restored.getRawShutterSeconds()!!)
     assertFalse(restored.hapticManager.isHapticsEnabled)
     assertEquals(ReadingStatus.WAITING, restored.readingStatus.value)
   }
@@ -253,6 +254,124 @@ class LightMeterViewModelTest {
     assertEquals("1/125", ExposureCalculator.SHUTTER_LABELS[model.selectedShutterIndex.value])
   }
 
+  @Test fun `dark camera readings and calibration retain the complete exposure`() {
+    val model = meter()
+    model.setIso(6400)
+    model.setApertureDirectly("f/2")
+    model.onOpticalEvMeasured(-6.0)
+    assertEquals(-6.0, model.computeEv100(), 0.000001)
+    assertEquals(4.0, model.getRawShutterSeconds()!!, 0.000001)
+    model.setCalibrationOffset(-3f)
+    model.onOpticalEvMeasured(-3.0)
+    assertEquals(-6.0, model.computeEv100(), 0.000001)
+    assertEquals(4.0, model.getCorrectedShutterSeconds()!!, 0.000001)
+  }
+
+  @Test fun `sensor retains original lux and calibrates once without clipping`() {
+    val model = meter()
+    model.setMeasurementSource(MeasurementSource.SENSOR)
+    model.setCalibrationOffset(1f)
+    model.onSensorLuxMeasured(0.1f)
+    assertEquals(0.1f, model.sensorManager.lux.value, 0.000001f)
+    assertEquals(kotlin.math.log2(0.1f.toDouble() / 2.5) + 1, model.computeEv100(), 0.000001)
+    model.onSensorLuxMeasured(0f)
+    assertFalse(model.hasReading.value)
+    assertEquals(ReadingStatus.UNAVAILABLE, model.readingStatus.value)
+  }
+
+  @Test fun `changing geometry preserves sensor and Sunny16 measurements`() {
+    val model = meter()
+    model.setMeasurementSource(MeasurementSource.SENSOR)
+    model.onSensorLuxMeasured(100f)
+    model.setFormat(CameraFormat.MEDIUM_66)
+    model.setFocalLength(100)
+    assertTrue(model.hasReading.value)
+    assertEquals(100f, model.sensorManager.lux.value, 0.000001f)
+    model.applySunny16Preset("f/16", "1/125", 100)
+    val ev = model.computeEv100()
+    model.setFormat(CameraFormat.FORMAT_35MM)
+    model.setFocalLength(85)
+    assertTrue(model.hasReading.value)
+    assertEquals(ev, model.computeEv100(), 0.000001)
+    model.toggleHold()
+    assertEquals(ReadingStatus.HELD, model.readingStatus.value)
+  }
+
+  @Test fun `shutter and manual modes use actual film exposure duration`() {
+    val model = meter()
+    model.setFilmStock(stocks.film)
+    model.setExposureMode(ExposureMode.SHUTTER_PRIORITY)
+    model.setShutterDirectly("30s")
+    model.onOpticalEvMeasured(-1.0)
+    assertEquals("f/5.6", ExposureCalculator.APERTURE_LABELS[model.selectedApertureIndex.value])
+    assertEquals(30.0, model.getCorrectedShutterSeconds()!!, 0.000001)
+    assertEquals(Math.pow(30.0, 1.0 / 1.31), model.getRawShutterSeconds()!!, 0.000001)
+    model.setExposureMode(ExposureMode.MANUAL_MATCH)
+    model.setApertureDirectly("f/8")
+    assertTrue(model.getEvDelta()!! > 1.2)
+    model.toggleHold()
+    model.logExposure()
+    dispatcher.scheduler.advanceUntilIdle()
+    assertEquals(30.0, logs.entries.value.single().correctedSeconds, 0.000001)
+    assertEquals(model.getRawShutterSeconds()!!, logs.entries.value.single().rawSeconds, 0.000001)
+  }
+
+  @Test fun `unsupported film corrections never produce a timed or saved recommendation`() {
+    val model = meter()
+    model.setFilmStock(stocks.film.copy(name = "Portra 400", brand = "Kodak", iso = 400))
+    model.setExposureMode(ExposureMode.APERTURE_PRIORITY)
+    model.setApertureDirectly("f/8")
+    model.onOpticalEvMeasured(-1.0)
+    assertNull(model.getCorrectedShutterSeconds())
+    assertNotNull(model.getExposureGuidance())
+    model.toggleHold()
+    model.logExposure()
+    dispatcher.scheduler.advanceUntilIdle()
+    assertTrue(logs.entries.value.isEmpty())
+    model.setExposureMode(ExposureMode.SHUTTER_PRIORITY)
+    model.setShutterDirectly("30s")
+    assertNull(model.getRawShutterSeconds())
+    assertNull(model.getEvDelta())
+  }
+
+  @Test fun `hyperfocal button uses the exact distance`() {
+    val model = meter()
+    model.setFocalLength(24)
+    model.setApertureDirectly("f/8")
+    model.setFocusToHyperfocal()
+    assertTrue(model.getDofResult().isFarInfinity)
+    assertEquals(model.getDofResult().hyperfocalMeters, model.focusDistanceMeters.value, 0.000001)
+  }
+
+  @Test fun `mode changes preserve the actual exposure to the nearest selectable shutter`() {
+    val model = meter()
+    model.setFilmStock(stocks.film)
+    model.setApertureDirectly("f/8")
+    model.onOpticalEvMeasured(1.0)
+    val actual = model.getCorrectedShutterSeconds()!!
+    assertTrue(actual > 15.0 && actual < 16.0)
+    model.setExposureMode(ExposureMode.MANUAL_MATCH)
+    assertEquals(15.0, model.getCorrectedShutterSeconds()!!, 0.000001)
+    assertTrue(kotlin.math.abs(model.getEvDelta()!!) < 0.1)
+    model.setExposureMode(ExposureMode.APERTURE_PRIORITY)
+    assertEquals(actual, model.getCorrectedShutterSeconds()!!, 0.000001)
+  }
+
+  @Test fun `deleting the selected film recalculates a held shutter priority aperture`() {
+    val model = meter()
+    model.setFilmStock(stocks.film.copy(isCustom = true, reciprocityFactor = 2.0))
+    model.setIso(100)
+    model.setExposureMode(ExposureMode.SHUTTER_PRIORITY)
+    model.setShutterDirectly("4s")
+    model.onOpticalEvMeasured(4.0)
+    model.toggleHold()
+    assertEquals("f/5.6", ExposureCalculator.APERTURE_LABELS[model.selectedApertureIndex.value])
+    model.deleteFilmStock(stocks.film.id)
+    dispatcher.scheduler.advanceUntilIdle()
+    assertEquals("f/8", ExposureCalculator.APERTURE_LABELS[model.selectedApertureIndex.value])
+    assertEquals(ReadingStatus.HELD, model.readingStatus.value)
+  }
+
   private class TestLogDao : FilmLogDao {
     val entries = MutableStateFlow<List<FilmLogEntry>>(emptyList())
     var insertGate: CompletableDeferred<Unit>? = null
@@ -273,7 +392,7 @@ class LightMeterViewModelTest {
   }
 
   private class TestStockDao : FilmStockDao {
-    val film = FilmStock(7, "HP5 Plus", "Ilford", 400, "Black & White", 1.31,
+    val film = FilmStock(7, "HP5 Plus 400", "Ilford", 400, "Black & White", 1.31,
       description = "Test film", badgeStyle = "HP5")
     override fun getAllFilmStocks() = MutableStateFlow(listOf(film))
     override suspend fun getFilmStockById(id: Int) = film.takeIf { it.id == id }

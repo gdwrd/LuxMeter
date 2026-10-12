@@ -4,6 +4,7 @@ import com.example.data.model.CameraFormat
 import com.example.data.model.FilmStock
 import com.example.sensor.ExposureCalculator
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.math.abs
@@ -53,13 +54,10 @@ class ExposureCalculatorTest {
     )
 
     // For exposure <= 1s, no reciprocity failure
-    assertEquals(0.5, portra.calculateCorrectedExposure(0.5), 0.001)
-    assertEquals(1.0, portra.calculateCorrectedExposure(1.0), 0.001)
+    assertEquals(0.5, portra.calculateCorrectedExposure(0.5)!!, 0.001)
+    assertEquals(1.0, portra.calculateCorrectedExposure(1.0)!!, 0.001)
 
-    // For exposure = 4.0s: 4^1.22 ≈ 5.42 seconds
-    val corrected = portra.calculateCorrectedExposure(4.0)
-    assertTrue("Expected corrected exposure > 4s but got $corrected", corrected > 4.0)
-    assertTrue("Expected corrected exposure < 7s but got $corrected", corrected < 7.0)
+    assertNull("Kodak provides no timed correction for this range", portra.calculateCorrectedExposure(4.0))
   }
 
   @Test
@@ -81,7 +79,7 @@ class ExposureCalculatorTest {
   fun testShutterPriorityAperture() {
     // At EV 15 and 1/125s shutter, aperture should calculate to f/16
     val shutter125Idx = ExposureCalculator.SHUTTER_LABELS.indexOf("1/125")
-    val apIdx = ExposureCalculator.calculateApertureIndexForShutter(shutter125Idx, 15.0)
+    val apIdx = ExposureCalculator.calculateApertureIndexForShutterSeconds(ExposureCalculator.SHUTTER_SECONDS[shutter125Idx], 15.0)
     val apertureLabel = ExposureCalculator.APERTURE_LABELS[apIdx]
     assertEquals("f/16", apertureLabel)
   }
@@ -162,5 +160,23 @@ class ExposureCalculatorTest {
       format = CameraFormat.FORMAT_35MM
     )
     assertEquals(2.8, eq35, 0.001)
+  }
+
+  @Test fun lowLightConversionAndCalibrationDoNotClipMeasuredEv() {
+    assertEquals(-6.0, ExposureCalculator.luxToEv100(0.0390625f), 0.000001)
+    assertEquals(-6.0, ExposureCalculator.luxToEv100(0.3125f, -3f), 0.000001)
+    assertEquals(23.0, ExposureCalculator.luxToEv100(2.5f * (1 shl 20), 3f), 0.000001)
+  }
+
+  @Test(expected = IllegalArgumentException::class)
+  fun zeroLuxDoesNotFabricateAReading() { ExposureCalculator.luxToEv100(0f) }
+
+  @Test fun unsupportedDurationsAreNotFormattedAsPlausibleValues() {
+    for (seconds in listOf(0.0, -1.0, Double.NaN, Double.POSITIVE_INFINITY, 60.0 * 60 * 60 * 60 * 60 * 60)) {
+      assertEquals("—", ExposureCalculator.formatSeconds(seconds))
+    }
+    assertEquals("86400s", ExposureCalculator.formatSeconds(ExposureCalculator.MAX_EXPOSURE_SECONDS))
+    assertEquals("1/2s", ExposureCalculator.formatSeconds(0.5))
+    assertEquals("0.810s", ExposureCalculator.formatSeconds(0.81))
   }
 }

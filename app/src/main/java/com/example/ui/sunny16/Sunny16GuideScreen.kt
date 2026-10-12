@@ -73,7 +73,9 @@ fun Sunny16GuideScreen(
   modifier: Modifier = Modifier
 ) {
   val format by viewModel.selectedFormat.collectAsStateWithLifecycle()
-  var iso by rememberSaveable { mutableIntStateOf(viewModel.activeIso) }
+  val stock by viewModel.selectedFilmStock.collectAsStateWithLifecycle()
+  val initialIso = rememberSaveable { viewModel.activeIso }
+  var iso by rememberSaveable { mutableIntStateOf(initialIso) }
   var conditionName by rememberSaveable { mutableStateOf(Sunny16Condition.SUNNY.name) }
   var showIsoMenu by rememberSaveable { mutableStateOf(false) }
   var showExplanation by rememberSaveable { mutableStateOf(false) }
@@ -101,7 +103,7 @@ fun Sunny16GuideScreen(
             Box {
               OutlinedButton(onClick = { showIsoMenu = true }) { Text("ISO " + iso) }
               DropdownMenu(expanded = showIsoMenu, onDismissRequest = { showIsoMenu = false }) {
-                (ExposureCalculator.STANDARD_ISOS + iso).distinct().sorted().forEach { value ->
+                (ExposureCalculator.STANDARD_ISOS + listOfNotNull(initialIso, stock?.iso, iso)).distinct().sorted().forEach { value ->
                   DropdownMenuItem(
                     text = { Text("ISO " + value) },
                     onClick = { iso = value; showIsoMenu = false }
