@@ -1,91 +1,96 @@
 package com.example.ui.components
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.Rect
+import android.hardware.camera2.CameraCaptureSession
+import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CaptureRequest
+import android.hardware.camera2.CaptureResult
+import android.hardware.camera2.TotalCaptureResult
+import android.hardware.camera2.params.MeteringRectangle
+import android.net.Uri
+import android.os.Build
+import android.os.SystemClock
+import android.provider.Settings
+import android.view.Surface
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.camera.camera2.interop.Camera2CameraControl
+import androidx.camera.camera2.interop.Camera2CameraInfo
+import androidx.camera.camera2.interop.Camera2Interop
+import androidx.camera.camera2.interop.CaptureRequestOptions
+import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.camera.core.Camera
-import androidx.camera.core.CameraControl
 import androidx.camera.core.CameraSelector
-import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.Preview
+import androidx.camera.core.UseCaseGroup
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
-import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CameraAlt
-import androidx.compose.material.icons.filled.ChevronLeft
-import androidx.compose.material.icons.filled.ChevronRight
-import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.LockOpen
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.PathEffect
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalView
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.core.view.doOnLayout
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.data.model.CameraFormat
+import com.example.sensor.CameraMetering
 import com.example.sensor.DepthOfFieldCalculator
 import com.example.sensor.HapticManager
-import com.example.ui.theme.VintageBrassBezel
-import com.example.ui.theme.VintageBrassBright
-import com.example.ui.theme.VintageBrassDark
-import com.example.ui.theme.VintageBrassPrimary
-import com.example.ui.theme.VintageIvoryMuted
-import com.example.ui.theme.VintageIvoryText
-import com.example.ui.theme.VintageLeatherDark
-import com.example.ui.theme.VintageLeatherSurface
-import com.example.ui.theme.VintageWitnessAmber
-import com.example.ui.theme.VintageWitnessRed
-import java.util.concurrent.Executors
-import kotlin.math.log2
-import kotlin.math.roundToInt
+import kotlinx.coroutines.delay
+import java.util.concurrent.atomic.AtomicBoolean
 
+private class HeldCameraFrame : ViewModel() {
+  var bitmap by mutableStateOf<Bitmap?>(null)
+}
+
+@androidx.annotation.OptIn(ExperimentalCamera2Interop::class)
+@Suppress("UNUSED_PARAMETER")
 @Composable
 fun CameraViewfinder(
   format: CameraFormat,
@@ -97,532 +102,341 @@ fun CameraViewfinder(
   onMeasuredEvChanged: (Double) -> Unit,
   modifier: Modifier = Modifier,
   currentEv: Double = 12.0,
-  viewportHeightDp: Int = 220
+  viewportHeightDp: Int = 220,
+  onCameraStatusChanged: (String?, Boolean) -> Unit = { _, _ -> }
 ) {
   val context = LocalContext.current
   val lifecycleOwner = LocalLifecycleOwner.current
-  val view = LocalView.current
-
-  var hasCameraPermission by remember {
-    mutableStateOf(
-      ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
-        PackageManager.PERMISSION_GRANTED
-    )
+  val mainExecutor = remember(context) { ContextCompat.getMainExecutor(context) }
+  val previewView = remember(context) {
+    PreviewView(context).apply {
+      keepScreenOn = true
+      implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+      scaleType = PreviewView.ScaleType.FILL_CENTER
+      importantForAccessibility = android.view.View.IMPORTANT_FOR_ACCESSIBILITY_NO
+    }
+  }
+  val heldFrame: HeldCameraFrame = viewModel { HeldCameraFrame() }
+  val locked by rememberUpdatedState(isLocked)
+  val onReading by rememberUpdatedState(onMeasuredEvChanged)
+  val onStatus by rememberUpdatedState(onCameraStatusChanged)
+  var hasPermission by remember {
+    mutableStateOf(ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED)
+  }
+  var permissionRequested by rememberSaveable { mutableStateOf(false) }
+  var resumed by remember { mutableStateOf(lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) }
+  var retry by remember { mutableIntStateOf(0) }
+  var previewSize by remember { mutableStateOf(IntSize.Zero) }
+  var cameraStatus by remember { mutableStateOf<String?>("Waiting for camera") }
+  var measuring by remember { mutableStateOf(true) }
+  var canRetry by remember { mutableStateOf(false) }
+  var framingLabel by remember { mutableStateOf("Phone framing") }
+  val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+    hasPermission = granted
+    permissionRequested = true
   }
 
-  val permissionLauncher = rememberLauncherForActivityResult(
-    contract = ActivityResultContracts.RequestPermission()
-  ) { granted ->
-    hasCameraPermission = granted
-    if (granted) {
-      hapticManager.performDialClick(view)
+  LaunchedEffect(cameraStatus, measuring) { onStatus(cameraStatus, measuring) }
+
+  DisposableEffect(lifecycleOwner) {
+    val observer = LifecycleEventObserver { _, event ->
+      if (event == Lifecycle.Event.ON_RESUME) {
+        hasPermission = ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+        resumed = true
+      } else if (event == Lifecycle.Event.ON_PAUSE) {
+        resumed = false
+      }
+    }
+    lifecycleOwner.lifecycle.addObserver(observer)
+    onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+  }
+
+  LaunchedEffect(isLocked, previewView) {
+    if (!isLocked) {
+      heldFrame.bitmap = null
+    } else if (heldFrame.bitmap == null) {
+      repeat(4) {
+        previewView.bitmap?.let {
+          heldFrame.bitmap = it
+          return@LaunchedEffect
+        }
+        delay(40)
+      }
     }
   }
 
-  // Spot tap coordinates normalized (0f..1f), default center
-  var spotPoint by remember { mutableStateOf(Offset(0.5f, 0.5f)) }
-  var isSpotMode by remember { mutableStateOf(true) }
-  var spotLuminance by remember { mutableFloatStateOf(128f) }
-  var showLensPicker by remember { mutableStateOf(false) }
+  DisposableEffect(hasPermission, resumed, previewSize, format, focalLengthMm, retry) {
+    val disposed = AtomicBoolean(false)
+    var provider: ProcessCameraProvider? = null
+    var preview: Preview? = null
+    var camera: Camera? = null
+    var lastCaptureMs = SystemClock.elapsedRealtime()
+    var lastProcessedMs = 0L
+    var requestedRegion: Rect? = null
+    var regionRequestedMs = 0L
+    var lastValidatedReadingMs = 0L
+    var zoomReady = false
+    var supportsFrameMetering = false
+    var activeArray: Rect? = null
+    var watchdog: Runnable? = null
 
-  // Rate-limiting state for smooth and fast rendering
-  var lastReportedEv by remember { androidx.compose.runtime.mutableDoubleStateOf(currentEv) }
-  var lastReportTimeMs by remember { androidx.compose.runtime.mutableLongStateOf(0L) }
-
-  // CameraControl for optical framing zoom
-  var cameraControlInstance by remember { mutableStateOf<CameraControl?>(null) }
-
-  // Crop factor calculation
-  val cropFactor = DepthOfFieldCalculator.getCropFactor(format)
-  val eq35mmFocal = focalLengthMm * cropFactor
-
-  // Standard smartphone primary lens base focal length (~26mm)
-  val basePhoneFocal = 26.0
-  val targetZoomRatio = (eq35mmFocal / basePhoneFocal).toFloat().coerceIn(1.0f, 8.0f)
-
-  // Lens choices for quick selection
-  val commonFocals = listOf(24, 28, 35, 50, 75, 80, 90, 105, 135, 200)
-
-  // Apply optical zoom when focal length or format changes
-  LaunchedEffect(targetZoomRatio, cameraControlInstance) {
-    try {
-      cameraControlInstance?.setZoomRatio(targetZoomRatio)
-    } catch (_: Exception) {
-      // Ignored if device doesn't support hardware level
+    fun unavailable(message: String) {
+      if (!disposed.get()) {
+        cameraStatus = message
+        measuring = false
+        canRetry = true
+      }
     }
-  }
 
-  Box(
-    modifier = modifier
-      .fillMaxWidth()
-      .height(viewportHeightDp.dp)
-      .shadow(8.dp, RoundedCornerShape(14.dp))
-      .clip(RoundedCornerShape(14.dp))
-      .background(VintageLeatherDark)
-      .border(2.dp, VintageBrassBezel, RoundedCornerShape(14.dp))
-  ) {
-    if (!hasCameraPermission) {
-      // Clean Permission Request State
-      Column(
-        modifier = Modifier
-          .fillMaxSize()
-          .background(VintageLeatherSurface)
-          .padding(16.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-      ) {
-        Icon(
-          imageVector = Icons.Default.CameraAlt,
-          contentDescription = "Camera viewfinder",
-          tint = VintageBrassPrimary,
-          modifier = Modifier.size(32.dp)
-        )
-        Spacer(modifier = Modifier.height(6.dp))
-        Text(
-          text = "OPTICAL VIEWFINDER",
-          fontSize = 13.sp,
-          fontWeight = FontWeight.Bold,
-          fontFamily = FontFamily.Serif,
-          color = VintageBrassBright
-        )
-        Text(
-          text = "Frame ${format.displayName} & spot-meter exposure with ${focalLengthMm}mm framing.",
-          fontSize = 10.sp,
-          fontFamily = FontFamily.Monospace,
-          color = VintageIvoryMuted,
-          textAlign = androidx.compose.ui.text.style.TextAlign.Center
-        )
-        Spacer(modifier = Modifier.height(10.dp))
-        Button(
-          onClick = {
-            hapticManager.performDialClick(view)
-            permissionLauncher.launch(Manifest.permission.CAMERA)
-          },
-          colors = ButtonDefaults.buttonColors(
-            containerColor = VintageBrassPrimary,
-            contentColor = Color.Black
-          ),
-          shape = RoundedCornerShape(8.dp)
-        ) {
-          Text(
-            text = "ENABLE CAMERA",
-            fontSize = 11.sp,
-            fontWeight = FontWeight.Bold,
-            fontFamily = FontFamily.Monospace
-          )
-        }
+    if (!hasPermission) {
+      cameraStatus = "Camera permission needed"
+      measuring = false
+      canRetry = false
+    } else if (!resumed) {
+      if (!locked) {
+        cameraStatus = "Camera paused"
+        measuring = false
       }
-    } else {
-      val cameraExecutor = remember { Executors.newSingleThreadExecutor() }
-
-      DisposableEffect(Unit) {
-        onDispose {
-          cameraExecutor.shutdown()
-        }
-      }
-
-      Box(
-        modifier = Modifier
-          .fillMaxSize()
-          .pointerInput(Unit) {
-            detectTapGestures { offset ->
-              hapticManager.performDialClick(view)
-              val normX = (offset.x / size.width).coerceIn(0.1f, 0.9f)
-              val normY = (offset.y / size.height).coerceIn(0.1f, 0.9f)
-              spotPoint = Offset(normX, normY)
-            }
-          }
-      ) {
-        AndroidView(
-          modifier = Modifier.fillMaxSize(),
-          factory = { ctx ->
-            val previewView = PreviewView(ctx).apply {
-              scaleType = PreviewView.ScaleType.FILL_CENTER
-            }
-
-            val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
-            cameraProviderFuture.addListener({
-              val cameraProvider = cameraProviderFuture.get()
-              val preview = Preview.Builder().build().also {
-                it.surfaceProvider = previewView.surfaceProvider
-              }
-
-              val imageAnalysis = ImageAnalysis.Builder()
-                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_YUV_420_888)
-                .build()
-
-              imageAnalysis.setAnalyzer(cameraExecutor) { imageProxy ->
-                if (!isLocked) {
-                  val yPlane = imageProxy.planes.firstOrNull()?.buffer
-                  if (yPlane != null) {
-                    val width = imageProxy.width
-                    val height = imageProxy.height
-
-                    var sum = 0L
-                    var count = 0
-
-                    if (isSpotMode) {
-                      val centerX = (spotPoint.x * width).toInt().coerceIn(0, width - 1)
-                      val centerY = (spotPoint.y * height).toInt().coerceIn(0, height - 1)
-                      val radius = (width * 0.08f).toInt().coerceAtLeast(8)
-
-                      val minX = (centerX - radius).coerceAtLeast(0)
-                      val maxX = (centerX + radius).coerceAtMost(width - 1)
-                      val minY = (centerY - radius).coerceAtLeast(0)
-                      val maxY = (centerY + radius).coerceAtMost(height - 1)
-
-                      for (y in minY..maxY step 2) {
-                        for (x in minX..maxX step 2) {
-                          val idx = y * width + x
-                          if (idx in 0 until yPlane.capacity()) {
-                            sum += (yPlane.get(idx).toInt() and 0xFF)
-                            count++
+    } else if (previewSize.width > 0 && previewSize.height > 0) {
+      cameraStatus = "Waiting for camera"
+      measuring = true
+      canRetry = false
+      val providerFuture = ProcessCameraProvider.getInstance(context)
+      previewView.doOnLayout {
+        providerFuture.addListener({
+          if (!disposed.get()) {
+            try {
+              val cameraProvider = providerFuture.get()
+              provider = cameraProvider
+              val selector = CameraSelector.DEFAULT_BACK_CAMERA
+              if (!cameraProvider.hasCamera(selector)) {
+                unavailable("No rear camera available")
+              } else {
+                val cameraInfo = Camera2CameraInfo.from(cameraProvider.getCameraInfo(selector))
+                activeArray = cameraInfo.getCameraCharacteristic(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)
+                supportsFrameMetering = (cameraInfo.getCameraCharacteristic(CameraCharacteristics.CONTROL_MAX_REGIONS_AE) ?: 0) > 0
+                val builder = Preview.Builder().setPreviewStabilizationEnabled(false)
+                val interop = Camera2Interop.Extender(builder)
+                  .setCaptureRequestOption(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
+                  .setCaptureRequestOption(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, 0)
+                  .setCaptureRequestOption(CaptureRequest.CONTROL_AE_LOCK, false)
+                  .setCaptureRequestOption(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE, CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_OFF)
+                if (Build.VERSION.SDK_INT >= 28) {
+                  val distortionModes = cameraInfo.getCameraCharacteristic(CameraCharacteristics.DISTORTION_CORRECTION_AVAILABLE_MODES)
+                  val mode = distortionModes?.firstOrNull { it == CaptureRequest.DISTORTION_CORRECTION_MODE_FAST }
+                    ?: distortionModes?.firstOrNull { it == CaptureRequest.DISTORTION_CORRECTION_MODE_HIGH_QUALITY }
+                  if (mode != null) {
+                    interop.setCaptureRequestOption(CaptureRequest.DISTORTION_CORRECTION_MODE, mode)
+                  } else if (distortionModes != null && distortionModes.isNotEmpty()) {
+                    val uncorrectedArray = cameraInfo.getCameraCharacteristic(CameraCharacteristics.SENSOR_INFO_PRE_CORRECTION_ACTIVE_ARRAY_SIZE)
+                    if (uncorrectedArray != null && uncorrectedArray != activeArray) supportsFrameMetering = false
+                  }
+                }
+                interop.setSessionCaptureCallback(object : CameraCaptureSession.CaptureCallback() {
+                  override fun onCaptureCompleted(session: CameraCaptureSession, request: CaptureRequest, result: TotalCaptureResult) {
+                    mainExecutor.execute {
+                      if (!disposed.get()) {
+                        val now = SystemClock.elapsedRealtime()
+                        lastCaptureMs = now
+                        if (!locked && zoomReady && supportsFrameMetering && now - lastProcessedMs >= 180L) {
+                          lastProcessedMs = now
+                          val sensor = activeArray
+                          val transform = previewView.sensorToViewTransform
+                          val crop = result.get(CaptureResult.SCALER_CROP_REGION)
+                          val region = if (sensor != null && transform != null && crop != null) {
+                            CameraMetering.frameRegion(previewView.width, previewView.height, transform, sensor, crop)
+                          } else null
+                          val originalRegion = requestedRegion
+                          if (region == null) {
+                            unavailable("Camera framing unavailable")
+                          } else if (CameraMetering.needsRegionUpdate(originalRegion, region)) {
+                            requestedRegion = region
+                            regionRequestedMs = now
+                            cameraStatus = "Measuring frame"
+                            measuring = true
+                            canRetry = false
+                            val options = CaptureRequestOptions.Builder()
+                              .setCaptureRequestOption(CaptureRequest.CONTROL_AE_REGIONS, arrayOf(MeteringRectangle(region, MeteringRectangle.METERING_WEIGHT_MAX)))
+                              .build()
+                            camera?.let { activeCamera ->
+                              val future = Camera2CameraControl.from(activeCamera.cameraControl).setCaptureRequestOptions(options)
+                              future.addListener({
+                                if (!disposed.get()) {
+                                  try { future.get() } catch (_: Exception) { unavailable("Frame metering unavailable") }
+                                }
+                              }, mainExecutor)
+                            }
+                          } else {
+                            val reportedRegions = result.get(CaptureResult.CONTROL_AE_REGIONS)
+                            val regionMatches = originalRegion != null && reportedRegions?.size == 1 && reportedRegions[0].meteringWeight > 0 &&
+                              CameraMetering.regionsMatch(originalRegion, reportedRegions[0].rect)
+                            val aeState = result.get(CaptureResult.CONTROL_AE_STATE)
+                            val unsettledMs = CameraMetering.unsettledDurationMs(now, regionRequestedMs, lastValidatedReadingMs)
+                            when {
+                              !regionMatches -> {
+                                if (unsettledMs > 3000L) {
+                                  unavailable("This camera cannot meter the outlined frame")
+                                } else {
+                                  cameraStatus = "Measuring frame"
+                                  measuring = true
+                                  canRetry = false
+                                }
+                              }
+                              aeState == CaptureResult.CONTROL_AE_STATE_FLASH_REQUIRED -> unavailable("Too dark for a reliable camera reading")
+                              aeState != CaptureResult.CONTROL_AE_STATE_CONVERGED -> {
+                                cameraStatus = "Measuring frame"
+                                measuring = true
+                                canRetry = unsettledMs > 5000L
+                              }
+                              else -> {
+                                val boost = result.get(CaptureResult.CONTROL_POST_RAW_SENSITIVITY_BOOST) ?: 100
+                                val ev = CameraMetering.ev100(
+                                  result.get(CaptureResult.SENSOR_EXPOSURE_TIME),
+                                  result.get(CaptureResult.SENSOR_SENSITIVITY),
+                                  result.get(CaptureResult.LENS_APERTURE),
+                                  boost
+                                )
+                                if (ev == null) {
+                                  unavailable("Camera exposure data unavailable")
+                                } else {
+                                  // Device AE is an estimate; compare with a reference meter before relying on it.
+                                  lastValidatedReadingMs = now
+                                  onReading(ev)
+                                  cameraStatus = null
+                                  measuring = false
+                                  canRetry = false
+                                }
+                              }
+                            }
                           }
                         }
-                      }
-                    } else {
-                      val stride = 14
-                      for (y in 0 until height step stride) {
-                        for (x in 0 until width step stride) {
-                          val idx = y * width + x
-                          if (idx in 0 until yPlane.capacity()) {
-                            sum += (yPlane.get(idx).toInt() and 0xFF)
-                            count++
-                          }
-                        }
-                      }
-                    }
-
-                    if (count > 0) {
-                      val avgY = (sum.toFloat() / count).coerceIn(1f, 254f)
-                      spotLuminance = avgY
-                      val evDelta = log2(avgY / 128.0)
-                      val dynamicEv = (currentEv + evDelta * 0.9).coerceIn(1.0, 18.0)
-                      val now = System.currentTimeMillis()
-                      if (kotlin.math.abs(dynamicEv - lastReportedEv) > 0.08 || (now - lastReportTimeMs > 220)) {
-                        lastReportedEv = dynamicEv
-                        lastReportTimeMs = now
-                        onMeasuredEvChanged(dynamicEv)
                       }
                     }
                   }
-                }
-                imageProxy.close()
-              }
-
-              val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
-
-              try {
-                cameraProvider.unbindAll()
-                val camera: Camera = cameraProvider.bindToLifecycle(
-                  lifecycleOwner,
-                  cameraSelector,
-                  preview,
-                  imageAnalysis
-                )
-                cameraControlInstance = camera.cameraControl
-                camera.cameraControl.setZoomRatio(targetZoomRatio)
-              } catch (_: Exception) {
-                // Handled gracefully
-              }
-            }, ContextCompat.getMainExecutor(ctx))
-
-            previewView
-          }
-        )
-
-        // Ground Glass & Rangefinder Framing Overlay
-        Canvas(modifier = Modifier.fillMaxSize()) {
-          val w = size.width
-          val h = size.height
-
-          // Format crop mask computation
-          val targetAspect = format.aspectRatioFloat
-          val (maskW, maskH) = if (w / h > targetAspect) {
-            val calcW = h * targetAspect
-            calcW to h
-          } else {
-            val calcH = w / targetAspect
-            w to calcH
-          }
-          val maskX = (w - maskW) / 2f
-          val maskY = (h - maskH) / 2f
-
-          // Shaded Letterboxing outside camera gate
-          drawRect(color = Color(0x66000000), topLeft = Offset.Zero, size = Size(w, maskY))
-          drawRect(color = Color(0x66000000), topLeft = Offset(0f, maskY + maskH), size = Size(w, h - (maskY + maskH)))
-          drawRect(color = Color(0x66000000), topLeft = Offset(0f, maskY), size = Size(maskX, maskH))
-          drawRect(color = Color(0x66000000), topLeft = Offset(maskX + maskW, maskY), size = Size(w - (maskX + maskW), maskH))
-
-          // Rangefinder Frame Corner Brackets
-          val bracketLen = (maskW * 0.12f).coerceAtLeast(18f)
-          val strokeW = 2.5f
-          val frameColor = VintageBrassBright.copy(alpha = 0.85f)
-
-          // Corners
-          drawLine(frameColor, Offset(maskX, maskY), Offset(maskX + bracketLen, maskY), strokeW)
-          drawLine(frameColor, Offset(maskX, maskY), Offset(maskX, maskY + bracketLen), strokeW)
-          drawLine(frameColor, Offset(maskX + maskW, maskY), Offset(maskX + maskW - bracketLen, maskY), strokeW)
-          drawLine(frameColor, Offset(maskX + maskW, maskY), Offset(maskX + maskW, maskY + bracketLen), strokeW)
-          drawLine(frameColor, Offset(maskX, maskY + maskH), Offset(maskX + bracketLen, maskY + maskH), strokeW)
-          drawLine(frameColor, Offset(maskX, maskY + maskH), Offset(maskX, maskY + maskH - bracketLen), strokeW)
-          drawLine(frameColor, Offset(maskX + maskW, maskY + maskH), Offset(maskX + maskW - bracketLen, maskY + maskH), strokeW)
-          drawLine(frameColor, Offset(maskX + maskW, maskY + maskH), Offset(maskX + maskW, maskY + maskH - bracketLen), strokeW)
-
-          // 6x6 Ground Glass center circle
-          if (format == CameraFormat.MEDIUM_66) {
-            drawCircle(
-              color = Color(0x44EAE3D2),
-              radius = maskH * 0.22f,
-              center = Offset(w / 2f, h / 2f),
-              style = Stroke(width = 1.2f, pathEffect = PathEffect.dashPathEffect(floatArrayOf(6f, 6f)))
-            )
-          }
-
-          // Spot Meter Reticle at user's tapped point
-          val spotPixelX = spotPoint.x * w
-          val spotPixelY = spotPoint.y * h
-          val spotRadius = (maskW * 0.07f).coerceIn(14f, 28f)
-          val reticleColor = if (isLocked) VintageWitnessRed else VintageBrassBright
-
-          drawCircle(color = reticleColor, radius = spotRadius, center = Offset(spotPixelX, spotPixelY), style = Stroke(width = 2f))
-          drawCircle(color = reticleColor, radius = 3f, center = Offset(spotPixelX, spotPixelY))
-          // Cross ticks
-          drawLine(reticleColor, Offset(spotPixelX - spotRadius - 5f, spotPixelY), Offset(spotPixelX - spotRadius + 3f, spotPixelY), 2f)
-          drawLine(reticleColor, Offset(spotPixelX + spotRadius - 3f, spotPixelY), Offset(spotPixelX + spotRadius + 5f, spotPixelY), 2f)
-          drawLine(reticleColor, Offset(spotPixelX, spotPixelY - spotRadius - 5f), Offset(spotPixelX, spotPixelY - spotRadius + 3f), 2f)
-          drawLine(reticleColor, Offset(spotPixelX, spotPixelY + spotRadius - 3f), Offset(spotPixelX, spotPixelY + spotRadius + 5f), 2f)
-        }
-
-        // Top HUD Overlay: Integrated Lens Selector + Live Lock/EV
-        Row(
-          modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 8.dp, vertical = 6.dp),
-          horizontalArrangement = Arrangement.SpaceBetween,
-          verticalAlignment = Alignment.CenterVertically
-        ) {
-          // Integrated Lens Pill with Visible Text Steppers
-          Row(
-            modifier = Modifier
-              .background(Color(0xCC1A130D), RoundedCornerShape(8.dp))
-              .border(1.dp, VintageBrassDark, RoundedCornerShape(8.dp))
-              .padding(horizontal = 3.dp, vertical = 2.dp),
-            verticalAlignment = Alignment.CenterVertically
-          ) {
-            Box(
-              modifier = Modifier
-                .clip(RoundedCornerShape(5.dp))
-                .background(Color(0xFF261D15))
-                .border(0.6.dp, VintageBrassDark, RoundedCornerShape(5.dp))
-                .clickable {
-                  val currentIdx = commonFocals.indexOf(focalLengthMm)
-                  val prev = if (currentIdx > 0) commonFocals[currentIdx - 1] else commonFocals.first()
-                  hapticManager.performDialClick(view)
-                  onFocalLengthChanged(prev)
-                }
-                .padding(horizontal = 5.dp, vertical = 4.dp),
-              contentAlignment = Alignment.Center
-            ) {
-              Text(
-                text = "◀ WIDE",
-                fontSize = 9.sp,
-                fontWeight = FontWeight.Bold,
-                fontFamily = FontFamily.Monospace,
-                color = VintageBrassPrimary
-              )
-            }
-
-            Column(
-              modifier = Modifier
-                .clickable {
-                  hapticManager.performDialClick(view)
-                  showLensPicker = !showLensPicker
-                }
-                .padding(horizontal = 6.dp),
-              horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-              Text(
-                text = "${focalLengthMm}mm",
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Bold,
-                fontFamily = FontFamily.Monospace,
-                color = VintageBrassBright
-              )
-              Text(
-                text = if (format != CameraFormat.FORMAT_35MM) {
-                  "≈ ${eq35mmFocal.roundToInt()}mm 35Eq"
+                })
+                val useCase = builder.build()
+                preview = useCase
+                useCase.surfaceProvider = previewView.surfaceProvider
+                val viewport = previewView.viewPort
+                if (viewport == null) {
+                  unavailable("Camera preview unavailable")
                 } else {
-                  format.displayName
-                },
-                fontSize = 8.sp,
-                fontFamily = FontFamily.Monospace,
-                color = VintageWitnessAmber
-              )
-            }
-
-            Box(
-              modifier = Modifier
-                .clip(RoundedCornerShape(5.dp))
-                .background(Color(0xFF261D15))
-                .border(0.6.dp, VintageBrassDark, RoundedCornerShape(5.dp))
-                .clickable {
-                  val currentIdx = commonFocals.indexOf(focalLengthMm)
-                  val next = if (currentIdx in 0 until commonFocals.lastIndex) commonFocals[currentIdx + 1] else commonFocals.last()
-                  hapticManager.performDialClick(view)
-                  onFocalLengthChanged(next)
-                }
-                .padding(horizontal = 5.dp, vertical = 4.dp),
-              contentAlignment = Alignment.Center
-            ) {
-              Text(
-                text = "TELE ▶",
-                fontSize = 9.sp,
-                fontWeight = FontWeight.Bold,
-                fontFamily = FontFamily.Monospace,
-                color = VintageBrassPrimary
-              )
-            }
-          }
-
-          // Top Right: Spot/Matrix & Lock Button with explicit text
-          Row(
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalAlignment = Alignment.CenterVertically
-          ) {
-            // Spot / Matrix Mode
-            Box(
-              modifier = Modifier
-                .clip(RoundedCornerShape(6.dp))
-                .background(if (isSpotMode) VintageBrassPrimary else Color(0xCC1A130D))
-                .border(0.8.dp, VintageBrassDark, RoundedCornerShape(6.dp))
-                .clickable {
-                  hapticManager.performDialClick(view)
-                  isSpotMode = !isSpotMode
-                }
-                .padding(horizontal = 7.dp, vertical = 5.dp)
-            ) {
-              Text(
-                text = if (isSpotMode) "⊙ SPOT" else "⊞ MATRIX",
-                fontSize = 9.sp,
-                fontWeight = FontWeight.Bold,
-                fontFamily = FontFamily.Monospace,
-                color = if (isSpotMode) Color.Black else VintageIvoryMuted
-              )
-            }
-
-            // Lock / Live Button
-            Box(
-              modifier = Modifier
-                .clip(RoundedCornerShape(6.dp))
-                .background(if (isLocked) VintageWitnessRed else Color(0xCC1A130D))
-                .border(0.8.dp, if (isLocked) VintageWitnessRed else VintageBrassDark, RoundedCornerShape(6.dp))
-                .clickable {
-                  hapticManager.performDialClick(view)
-                  onToggleLock()
-                }
-                .padding(horizontal = 7.dp, vertical = 5.dp)
-            ) {
-              Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(3.dp)
-              ) {
-                Icon(
-                  imageVector = if (isLocked) Icons.Default.Lock else Icons.Default.LockOpen,
-                  contentDescription = null,
-                  tint = if (isLocked) Color.White else VintageBrassPrimary,
-                  modifier = Modifier.size(11.dp)
-                )
-                Text(
-                  text = if (isLocked) "HOLD EV" else "LIVE EV",
-                  fontSize = 9.sp,
-                  fontWeight = FontWeight.Bold,
-                  fontFamily = FontFamily.Monospace,
-                  color = if (isLocked) Color.White else VintageBrassBright
-                )
-              }
-            }
-          }
-        }
-
-        // Quick Lens Preset Bar (pops open smoothly when lens pill is clicked)
-        if (showLensPicker) {
-          Box(
-            modifier = Modifier
-              .align(Alignment.TopCenter)
-              .padding(top = 42.dp, start = 8.dp, end = 8.dp)
-              .fillMaxWidth()
-              .background(Color(0xF017110C), RoundedCornerShape(8.dp))
-              .border(1.dp, VintageBrassPrimary, RoundedCornerShape(8.dp))
-              .padding(4.dp)
-          ) {
-            LazyRow(
-              horizontalArrangement = Arrangement.spacedBy(4.dp),
-              modifier = Modifier.fillMaxWidth()
-            ) {
-              items(commonFocals) { fMm ->
-                val isSelected = fMm == focalLengthMm
-                Box(
-                  modifier = Modifier
-                    .clip(RoundedCornerShape(5.dp))
-                    .background(if (isSelected) VintageBrassPrimary else Color(0xFF261D15))
-                    .border(0.6.dp, if (isSelected) VintageBrassBright else VintageBrassDark, RoundedCornerShape(5.dp))
-                    .clickable {
-                      hapticManager.performDialClick(view)
-                      onFocalLengthChanged(fMm)
-                      showLensPicker = false
+                  val group = UseCaseGroup.Builder().setViewPort(viewport).addUseCase(useCase).build()
+                  val activeCamera = cameraProvider.bindToLifecycle(lifecycleOwner, selector, group)
+                  camera = activeCamera
+                  val physicalSize = cameraInfo.getCameraCharacteristic(CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE)
+                  val phoneFocal = cameraInfo.getCameraCharacteristic(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)?.firstOrNull()
+                  val sensorRotation = cameraInfo.getCameraCharacteristic(CameraCharacteristics.SENSOR_ORIENTATION)
+                  val displayRotation = (previewView.display?.rotation ?: Surface.ROTATION_0) * 90
+                  val desiredZoom = if (physicalSize != null && phoneFocal != null && sensorRotation != null) {
+                    CameraMetering.framingZoom(
+                      focalLengthMm * DepthOfFieldCalculator.getCropFactor(format), phoneFocal,
+                      physicalSize.width, physicalSize.height, format.aspectRatioFloat,
+                      (sensorRotation - displayRotation + 360) % 360
+                    )
+                  } else null
+                  val zoomState = activeCamera.cameraInfo.zoomState.value
+                  val zoom = (desiredZoom ?: 1f).coerceIn(zoomState?.minZoomRatio ?: 1f, zoomState?.maxZoomRatio ?: 1f)
+                  framingLabel = when {
+                    desiredZoom == null -> "Phone framing"
+                    kotlin.math.abs(zoom - desiredZoom) > 0.02f -> "Phone lens limit · approximate framing"
+                    else -> "Approximate ${focalLengthMm}mm framing"
+                  }
+                  val zoomFuture = activeCamera.cameraControl.setZoomRatio(zoom)
+                  zoomFuture.addListener({
+                    if (!disposed.get()) {
+                      try {
+                        zoomFuture.get()
+                        zoomReady = true
+                      } catch (_: Exception) {
+                        unavailable("Camera zoom unavailable")
+                      }
                     }
-                    .padding(horizontal = 7.dp, vertical = 3.dp)
-                ) {
-                  Text(
-                    text = "${fMm}mm",
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold,
-                    fontFamily = FontFamily.Monospace,
-                    color = if (isSelected) Color.Black else VintageIvoryText
-                  )
+                  }, mainExecutor)
+                  if (!supportsFrameMetering || activeArray == null) unavailable("This phone cannot meter the outlined frame")
+                  val checkCamera = object : Runnable {
+                    override fun run() {
+                      if (!disposed.get()) {
+                        if (!locked && SystemClock.elapsedRealtime() - lastCaptureMs > 5000L) unavailable("Camera unavailable · try again")
+                        previewView.postDelayed(this, 2000L)
+                      }
+                    }
+                  }
+                  watchdog = checkCamera
+                  previewView.postDelayed(checkCamera, 5000L)
                 }
               }
+            } catch (_: Exception) {
+              unavailable("Camera unavailable · try again")
             }
           }
-        }
+        }, mainExecutor)
+      }
+    }
+    onDispose {
+      disposed.set(true)
+      watchdog?.let { previewView.removeCallbacks(it) }
+      camera?.let { Camera2CameraControl.from(it.cameraControl).clearCaptureRequestOptions() }
+      preview?.let { provider?.unbind(it) }
+    }
+  }
 
-        // Bottom HUD Overlay: Zone System & Live EV Readout
-        Box(
-          modifier = Modifier
-            .align(Alignment.BottomCenter)
-            .fillMaxWidth()
-            .background(Color(0xDD140F0C))
-            .padding(horizontal = 10.dp, vertical = 4.dp)
-        ) {
-          Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-          ) {
-            val zoneNum = ((spotLuminance / 255f) * 10f).roundToInt().coerceIn(0, 10)
-            val zoneRoman = listOf("0", "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X")[zoneNum]
-
-            Text(
-              text = "ZONE $zoneRoman • ${if (zoneNum == 5) "MIDTONE" else if (zoneNum < 4) "SHADOW" else "HIGHLIGHT"}",
-              fontSize = 10.sp,
-              fontWeight = FontWeight.Bold,
-              fontFamily = FontFamily.Monospace,
-              color = VintageWitnessAmber
-            )
-
-            Text(
-              text = if (isLocked) "HOLD: EV ${String.format(java.util.Locale.US, "%.1f", currentEv)}"
-                     else "EV₁₀₀: ${String.format(java.util.Locale.US, "%.1f", currentEv)}",
-              fontSize = 11.sp,
-              fontWeight = FontWeight.Bold,
-              fontFamily = FontFamily.Monospace,
-              color = if (isLocked) VintageWitnessRed else VintageBrassBright
-            )
+  BoxWithConstraints(
+    modifier = modifier.fillMaxWidth().height(viewportHeightDp.dp).clip(RoundedCornerShape(20.dp)).background(Color.Black),
+    contentAlignment = Alignment.Center
+  ) {
+    val availableWidth = (maxWidth - 32.dp).coerceAtLeast(1.dp)
+    val availableHeight = (maxHeight - 48.dp).coerceAtLeast(1.dp)
+    val frameWidth = minOf(availableWidth, availableHeight * format.aspectRatioFloat)
+    val frameHeight = frameWidth / format.aspectRatioFloat
+    Box(
+      modifier = Modifier.size(frameWidth, frameHeight).border(1.dp, Color.White.copy(alpha = 0.85f))
+    ) {
+      AndroidView(
+        factory = { previewView },
+        // Native camera pixels must not remain live around the held bitmap.
+        update = { it.alpha = if (isLocked) 0f else 1f },
+        modifier = Modifier.fillMaxSize().onSizeChanged { previewSize = it }
+      )
+      if (isLocked) {
+        val bitmap = heldFrame.bitmap
+        if (bitmap != null) {
+          Image(bitmap.asImageBitmap(), contentDescription = "Held camera frame", modifier = Modifier.fillMaxSize(), contentScale = ContentScale.FillBounds)
+        } else {
+          Box(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
+            Text("Reading held\nPreview unavailable", color = Color.White, textAlign = TextAlign.Center, style = MaterialTheme.typography.bodyMedium)
           }
         }
       }
+    }
+    if (!hasPermission || (canRetry && !isLocked)) {
+      Column(
+        modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.9f)).verticalScroll(rememberScrollState()).padding(20.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterVertically)
+      ) {
+        Text(cameraStatus ?: "Camera unavailable", color = Color.White, style = MaterialTheme.typography.bodyLarge, textAlign = TextAlign.Center)
+        if (!hasPermission) {
+          Text("Use the rear camera to meter the scene inside the frame.", color = Color.White.copy(alpha = 0.75f), style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center)
+          Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = { permissionLauncher.launch(Manifest.permission.CAMERA) }) { Text("Enable camera") }
+            if (permissionRequested) {
+              TextButton(onClick = {
+                context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}")))
+              }) { Text("Settings", color = Color.White) }
+            }
+          }
+        } else {
+          Button(onClick = { retry++ }) { Text("Try again") }
+        }
+      }
+    } else {
+      Text(
+        text = if (isLocked) "Frame held" else cameraStatus ?: framingLabel,
+        color = Color.White,
+        style = MaterialTheme.typography.labelMedium,
+        modifier = Modifier.align(Alignment.BottomCenter).background(Color.Black.copy(alpha = 0.8f), RoundedCornerShape(8.dp)).padding(horizontal = 10.dp, vertical = 4.dp)
+      )
     }
   }
 }

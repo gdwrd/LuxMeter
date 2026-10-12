@@ -17,19 +17,23 @@ class LightSensorManager(context: Context) : SensorEventListener {
 
   val isHardwareSensorAvailable: Boolean = lightSensor != null
 
-  private val _lux = MutableStateFlow(400f) // default to pleasant room light (EV ~7.3)
+  private val _lux = MutableStateFlow(0f)
   val lux: StateFlow<Float> = _lux.asStateFlow()
+
+  private val _readings = MutableStateFlow<Float?>(null)
+  val readings: StateFlow<Float?> = _readings.asStateFlow()
 
   private val _isLocked = MutableStateFlow(false)
   val isLocked: StateFlow<Boolean> = _isLocked.asStateFlow()
 
-  private var smoothedLux = 400f
+  private var smoothedLux: Float? = null
   private val smoothingFactor = 0.25f
 
-  fun start() {
+  fun start(): Boolean {
     if (lightSensor != null && !_isLocked.value) {
-      sensorManager?.registerListener(this, lightSensor, SensorManager.SENSOR_DELAY_UI)
+      return sensorManager?.registerListener(this, lightSensor, SensorManager.SENSOR_DELAY_UI) == true
     }
+    return false
   }
 
   fun stop() {
@@ -37,31 +41,36 @@ class LightSensorManager(context: Context) : SensorEventListener {
   }
 
   fun toggleLock() {
-    val newLock = !_isLocked.value
-    _isLocked.value = newLock
-    if (newLock) {
-      stop()
-    } else {
-      start()
-    }
+    setLocked(!_isLocked.value)
+  }
+
+  fun setLocked(locked: Boolean) {
+    _isLocked.value = locked
+    if (locked) stop()
+  }
+
+  fun resetReadings() {
+    smoothedLux = null
+    _readings.value = null
   }
 
   fun setManualLux(newLux: Float) {
-    smoothedLux = newLux.coerceAtLeast(0.1f)
-    _lux.value = smoothedLux
+    if (newLux.isFinite() && newLux >= 0f) _lux.value = newLux
   }
 
   override fun onSensorChanged(event: SensorEvent?) {
     if (_isLocked.value) return
     if (event?.sensor?.type == Sensor.TYPE_LIGHT) {
       val rawLux = event.values.firstOrNull() ?: return
-      if (rawLux > 0) {
-        smoothedLux = if (abs(rawLux - smoothedLux) > 200f) {
+      if (rawLux.isFinite() && rawLux >= 0f) {
+        val previous = smoothedLux
+        val nextLux = if (previous == null || abs(rawLux - previous) > 200f) {
           rawLux // Fast transition on drastic light change
         } else {
-          smoothedLux + smoothingFactor * (rawLux - smoothedLux)
+          previous + smoothingFactor * (rawLux - previous)
         }
-        _lux.value = smoothedLux
+        smoothedLux = nextLux
+        _readings.value = nextLux
       }
     }
   }

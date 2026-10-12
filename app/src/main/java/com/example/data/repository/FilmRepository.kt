@@ -21,6 +21,8 @@ class FilmRepository(
     return filmStockDao.insertFilmStock(stock)
   }
 
+  suspend fun getFilmStock(id: Int): FilmStock? = filmStockDao.getFilmStockById(id)
+
   suspend fun deleteStock(id: Int) {
     filmStockDao.deleteFilmStockById(id)
   }
