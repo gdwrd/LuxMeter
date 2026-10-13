@@ -57,7 +57,9 @@ Requirements: JDK 17 or newer (tested with JDK 21), Android SDK platform 36.1, b
 ./gradlew :app:testDebugUnitTest :app:assembleDebug
 ```
 
-The wrapper pins Gradle 9.3.1 and verifies its distribution checksum. Debug builds use Android's standard debug signing configuration and install as **LuxMeter Preview** (`com.aistudio.luxmeter.analog.debug`), alongside the release app with separate storage. The APK is written to `app/build/outputs/apk/debug/app-debug.apk`.
+The wrapper pins Gradle 9.3.1 and verifies its distribution checksum. Release builds use **com.nsheremet.luxmeter**. Debug builds use Android's standard debug signing configuration and install as **LuxMeter Preview** (`com.nsheremet.luxmeter.debug`), alongside the release app with separate storage. The APK is written to `app/build/outputs/apk/debug/app-debug.apk`.
+
+These IDs identify new Android apps. Existing installations under `com.aistudio.luxmeter.analog` and `com.aistudio.luxmeter.analog.debug` remain separate, and their saved data does not move automatically to the new apps. Keep the old apps until you have backed up any records you need.
 
 GitHub Actions runs unit tests, lint, a debug build, and the full Android UI test suite on an API 35 emulator for every push and pull request. The workflow also supports manual runs. Download **luxmeter-preview** for the debug APK or **android-test-reports** for results from the run's artifacts; they are retained for 14 days.
 
@@ -76,7 +78,7 @@ git push origin v1.0.1
 
 The release contains **LuxMeter-v1.0.1.apk** and generated release notes. The app version is the tag with an optional leading `v` removed; Android's version code uses the increasing GitHub Actions run number. All tag names trigger releases. Rerunning a published tag keeps its existing APK; a failed draft can resume uploading before publication.
 
-Signing uses a stable PKCS12 keystore with alias `upload`, supplied through repository secrets **KEYSTORE_BASE64**, **STORE_PASSWORD**, and **KEY_PASSWORD**. The keystore is decoded only into the runner's temporary directory and removed after the job. Keep a secure backup of this key and its password: future updates must use the same signing key. This GitHub release key differs from the original installed release's key, so those installations need a reinstall to switch to GitHub APKs.
+Signing uses a stable PKCS12 keystore with alias `upload`, supplied through repository secrets **KEYSTORE_BASE64**, **STORE_PASSWORD**, and **KEY_PASSWORD**. The keystore is decoded only into the runner's temporary directory and removed after the job. Keep a secure backup of this key and its password: future updates to `com.nsheremet.luxmeter` must use the same signing key. The new app can be installed alongside the original app without removing its data.
 
 ## Technical foundation
 
