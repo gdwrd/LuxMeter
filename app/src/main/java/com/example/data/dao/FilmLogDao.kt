@@ -21,6 +21,9 @@ interface FilmLogDao {
   @Insert(onConflict = OnConflictStrategy.REPLACE)
   suspend fun insertLogEntry(entry: FilmLogEntry): Long
 
+  @Query("UPDATE film_log_entries SET notes = :notes WHERE id = :id")
+  suspend fun updateLogNotes(id: Int, notes: String)
+
   @Query("DELETE FROM film_log_entries WHERE id = :id")
   suspend fun deleteEntryById(id: Int)
 

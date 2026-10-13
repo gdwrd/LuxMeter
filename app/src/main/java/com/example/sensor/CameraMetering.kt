@@ -25,17 +25,28 @@ object CameraMetering {
       .takeIf { it.isFinite() }
   }
 
+  fun selectedAreaAt(x: Float, y: Float): RectF? {
+    if (!x.isFinite() || !y.isFinite() || x !in 0f..1f || y !in 0f..1f) return null
+    val left = (x - 0.06f).coerceIn(0f, 0.88f)
+    val top = (y - 0.06f).coerceIn(0f, 0.88f)
+    return RectF(left, top, left + 0.12f, top + 0.12f)
+  }
+
   fun frameRegion(
     viewWidth: Int,
     viewHeight: Int,
     sensorToView: Matrix,
     activeArray: Rect,
-    cropRegion: Rect
+    cropRegion: Rect,
+    normalizedArea: RectF? = null
   ): Rect? {
     if (viewWidth <= 0 || viewHeight <= 0 || activeArray.isEmpty || cropRegion.isEmpty) return null
+    val area = normalizedArea ?: RectF(0f, 0f, 1f, 1f)
+    if (area.isEmpty || !listOf(area.left, area.top, area.right, area.bottom).all { it.isFinite() } ||
+      area.left < 0f || area.top < 0f || area.right > 1f || area.bottom > 1f) return null
     val viewToSensor = Matrix()
     if (!sensorToView.invert(viewToSensor)) return null
-    val frame = RectF(0f, 0f, viewWidth.toFloat(), viewHeight.toFloat())
+    val frame = RectF(area.left * viewWidth, area.top * viewHeight, area.right * viewWidth, area.bottom * viewHeight)
     viewToSensor.mapRect(frame)
     if (!listOf(frame.left, frame.top, frame.right, frame.bottom).all { it.isFinite() }) return null
 

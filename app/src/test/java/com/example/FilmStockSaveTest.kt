@@ -108,6 +108,7 @@ class FilmStockSaveTest {
     override suspend fun getLatestEntryForRoll(rollId: String): FilmLogEntry? = null
     override suspend fun insertLogEntry(entry: FilmLogEntry) = 1L
     override suspend fun deleteEntryById(id: Int) = Unit
+    override suspend fun updateLogNotes(id: Int, notes: String) = Unit
     override suspend fun deleteRollEntries(rollId: String) = Unit
   }
 }

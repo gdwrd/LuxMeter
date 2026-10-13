@@ -10,6 +10,17 @@ import org.junit.Test
 import kotlin.math.abs
 
 class ExposureCalculatorTest {
+  @Test fun cameraDialInputSupportsOlderSpeedsAndRejectsInvalidValues() {
+    assertEquals(listOf(0.01, 0.02, 0.04, 1.0), ExposureCalculator.parseShutterSpeeds("1/25 1/50,1/100 1s"))
+    assertEquals("1/25s", ExposureCalculator.formatSeconds(0.04))
+    assertEquals("f/3.5", ExposureCalculator.formatAperture(3.5))
+    for (input in listOf("", "0", "1/0", "1/2/3", "NaN", "Infinity", "61", "1/125 invalid"))
+      assertNull(input, ExposureCalculator.parseShutterSpeeds(input))
+    val apertures = listOf(3.5, 5.6, 8.0)
+    val shutters = listOf(0.01, 0.02, 0.04, 1.0)
+    val index = ExposureCalculator.calculateShutterIndexForAperture(0, kotlin.math.log2(3.5 * 3.5 / 0.04), apertures, shutters)
+    assertEquals(2, index)
+  }
 
   @Test
   fun testSunny16Rule() {

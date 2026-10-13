@@ -5,6 +5,7 @@ import com.example.ui.components.remainingExposureMillis
 import com.example.ui.sunny16.sunny16ShutterForIso
 import com.example.ui.settings.isValidReciprocityExponent
 import com.example.ui.settings.parseReciprocityExponent
+import com.example.ui.settings.createUnlistedFilm
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -39,6 +40,26 @@ class SupportFlowTest {
     assertNull(parseReciprocityExponent("1,31 extra", Locale.GERMANY))
     assertNull(parseReciprocityExponent("NaN", Locale.US))
     assertNull(parseReciprocityExponent("", Locale.US))
+  }
+
+  @Test
+  fun unlistedFilmDoesNotInventAReciprocityProfile() {
+    val film = createUnlistedFilm("Test film", "Test brand", 125, "Black & White", false, null)!!
+    assertEquals("Black & White", film.type)
+    assertEquals(125, film.iso)
+    assertFalse(film.hasReciprocityProfile)
+    assertEquals(1.0, film.reciprocityFactor, 0.0)
+    assertNull(film.calculateCorrectedExposure(10.0))
+  }
+
+  @Test
+  fun testedCustomProfileRequiresAValidExponent() {
+    assertNull(createUnlistedFilm("Test", "", 125, "Black & White", true, null))
+    assertNull(createUnlistedFilm("Test", "", 125, "Black & White", true, 3.0))
+    assertNull(createUnlistedFilm("Test", "", 0, "Black & White", false, null))
+    val film = createUnlistedFilm("Test", "", 125, "Black & White", true, 1.31)!!
+    assertTrue(film.hasReciprocityProfile)
+    assertEquals(20.4, film.calculateCorrectedExposure(10.0)!!, 0.1)
   }
 
   @Test

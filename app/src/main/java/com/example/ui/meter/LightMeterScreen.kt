@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -24,6 +25,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Timer
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.WbSunny
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -48,9 +50,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
@@ -63,7 +67,12 @@ import com.example.sensor.DepthOfFieldCalculator
 import com.example.sensor.ExposureCalculator
 import com.example.ui.components.CameraViewfinder
 import com.example.ui.components.ExposureTimerDialog
+import com.example.ui.components.ExposureAdjustmentsDialog
+import com.example.ui.components.FilmDetailsDialog
 import com.example.ui.components.FilmStockPickerSheet
+import com.example.ui.components.ManualExposureDialog
+import com.example.ui.components.formatCompensation
+import com.example.ui.components.formatExposureInput
 import java.util.Locale
 import kotlin.math.abs
 
@@ -72,9 +81,12 @@ import kotlin.math.abs
 fun LightMeterScreen(
   viewModel: LightMeterViewModel,
   modifier: Modifier = Modifier,
-  onOpenSunny16: () -> Unit = {}
+  onOpenSunny16: () -> Unit = {},
+  onOpenRolls: () -> Unit = {},
+  onOpenCameraSetup: () -> Unit = {}
 ) {
   val lifecycleOwner = LocalLifecycleOwner.current
+  val compactViewfinderHeight = (LocalConfiguration.current.screenHeightDp - 700).coerceIn(160, 280)
   val view = LocalView.current
   val lux by viewModel.sensorManager.lux.collectAsStateWithLifecycle()
   val source by viewModel.measurementSource.collectAsStateWithLifecycle()
@@ -98,18 +110,40 @@ fun LightMeterScreen(
   val showFilm by viewModel.showStockPickerSheet.collectAsStateWithLifecycle()
   val showTimer by viewModel.showTimerDialog.collectAsStateWithLifecycle()
   val stocks by viewModel.allStocks.collectAsStateWithLifecycle()
+  val cameraSetup by viewModel.currentCameraSetup.collectAsStateWithLifecycle()
+  val cameraSetups by viewModel.allCameraSetups.collectAsStateWithLifecycle()
+  val roll by viewModel.currentRoll.collectAsStateWithLifecycle()
+  val rollName by viewModel.currentRollName.collectAsStateWithLifecycle()
+  val frameCount by viewModel.activeRollFrameCount.collectAsStateWithLifecycle()
+  val compensation by viewModel.exposureCompensation.collectAsStateWithLifecycle()
+  val filterStops by viewModel.filterStops.collectAsStateWithLifecycle()
   var picker by rememberSaveable { mutableStateOf<String?>(null) }
+  var showAdjustments by rememberSaveable { mutableStateOf(false) }
+  var showFilmDetails by rememberSaveable { mutableStateOf(false) }
+  var showManualRecord by rememberSaveable { mutableStateOf(false) }
+  var freshManualFrame by rememberSaveable { mutableStateOf(false) }
 
   val iso = customIso ?: stock?.iso ?: 400
   val held = status == ReadingStatus.HELD
-  val aperture = ExposureCalculator.APERTURE_VALUES[apertureIndex]
-  val selectedSeconds = ExposureCalculator.SHUTTER_SECONDS[shutterIndex]
+  val apertureLabels = viewModel.apertureLabels
+  val shutterLabels = viewModel.shutterLabels
+  val aperture = viewModel.availableApertures[apertureIndex]
+  val selectedSeconds = viewModel.availableShutterSeconds[shutterIndex]
   val rawSeconds = viewModel.getRawShutterSeconds()
   val correctedSeconds = viewModel.getCorrectedShutterSeconds()
+  val sceneSeconds = viewModel.getBaseMeteredSeconds()
+  val adjustedSeconds = viewModel.getFilteredMeteredSeconds()
   val exposureSupported = rawSeconds != null && correctedSeconds != null
+  val requiresBulb = mode == ExposureMode.APERTURE_PRIORITY && correctedSeconds != null && correctedSeconds >= 1.0 &&
+    viewModel.availableShutterSeconds.none { abs(it - correctedSeconds) < 1e-6 }
   val ev100 = if (measuredEv != null) viewModel.computeEv100() else Double.NaN
   val evDelta = viewModel.getEvDelta()
   val exposureGuidance = viewModel.getExposureGuidance()
+  val rollGuidance = viewModel.getCurrentRollGuidance()
+  val canSaveRoll = viewModel.canSaveToCurrentRoll()
+  val adjustmentsActive = abs(compensation) > 0.0001 || filterStops > 0.0001
+  val showMeteredOnly = mode == ExposureMode.APERTURE_PRIORITY && rawSeconds != null && correctedSeconds == null &&
+    stock?.hasReciprocityProfile == false && evDelta != null && abs(evDelta) <= 0.6
 
   DisposableEffect(lifecycleOwner, viewModel) {
     val observer = LifecycleEventObserver { _, event ->
@@ -129,7 +163,10 @@ fun LightMeterScreen(
     }
   }
   LaunchedEffect(savedEntry?.id) {
-    if (savedEntry != null) viewModel.hapticManager.performShutterRelease(view)
+    if (savedEntry != null) {
+      viewModel.hapticManager.performShutterRelease(view)
+      showManualRecord = false
+    }
   }
 
   val preview: @Composable (Int) -> Unit = { viewportHeight ->
@@ -170,6 +207,7 @@ fun LightMeterScreen(
             onToggleLock = viewModel::toggleHold,
             onMeasuredEvChanged = { ev -> viewModel.onOpticalEvMeasured(ev, format, focalLength) },
             onCameraStatusChanged = viewModel::setCameraStatus,
+            onMeteringAreaChanged = viewModel::invalidateCameraReading,
             viewportHeightDp = viewportHeight
           )
       } else {
@@ -214,25 +252,57 @@ fun LightMeterScreen(
       }
       ExposureReadout(
         mode = mode,
-        apertureLabel = ExposureCalculator.APERTURE_LABELS[apertureIndex],
-        shutterLabel = if (mode == ExposureMode.APERTURE_PRIORITY) correctedSeconds?.let(ExposureCalculator::formatSeconds) ?: "—"
+        apertureLabel = apertureLabels[apertureIndex],
+        shutterLabel = if (showMeteredOnly) ExposureCalculator.formatSeconds(rawSeconds!!)
+          else if (mode == ExposureMode.APERTURE_PRIORITY) correctedSeconds?.let(ExposureCalculator::formatSeconds) ?: "—"
           else ExposureCalculator.formatSeconds(selectedSeconds),
-        available = hasReading && exposureSupported,
+        available = hasReading && (exposureSupported || showMeteredOnly),
         ev100 = ev100,
         evDelta = evDelta ?: 0.0,
         enabled = !saving,
         onPickAperture = { picker = "aperture" },
-        onPickShutter = { picker = "shutter" }
+        onPickShutter = { picker = "shutter" },
+        resultLabel = if (showMeteredOnly) "Metered shutter" else if (requiresBulb) "Bulb exposure" else null
       )
+
+      FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        TextButton(onClick = { showAdjustments = true }, enabled = !saving) {
+          Icon(Icons.Default.Tune, contentDescription = null, modifier = Modifier.size(18.dp))
+          Text("Exposure adjustments", Modifier.padding(start = 6.dp))
+        }
+        if (adjustmentsActive) {
+          TextButton(onClick = viewModel::resetExposureAdjustments, enabled = !saving) { Text("Reset adjustments") }
+        }
+      }
+      if (adjustmentsActive) {
+        Text(
+          "Compensation ${formatCompensation(compensation)} · filter ${formatExposureInput(filterStops)} stops",
+          style = MaterialTheme.typography.bodyMedium
+        )
+        if (hasReading && mode == ExposureMode.APERTURE_PRIORITY) {
+          Text(
+            "Scene ${sceneSeconds?.let(ExposureCalculator::formatSeconds) ?: "—"} · after adjustments ${adjustedSeconds?.let(ExposureCalculator::formatSeconds) ?: "—"} · film exposure ${correctedSeconds?.let(ExposureCalculator::formatSeconds) ?: "unavailable"}",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+          )
+        }
+      }
 
       if (hasReading && mode != ExposureMode.MANUAL_MATCH && evDelta != null && abs(evDelta) > 0.6) {
         Text("Outside the available exposure range. Choose another aperture or shutter speed.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
       }
-      if (hasReading && !exposureSupported && mode == ExposureMode.APERTURE_PRIORITY && rawSeconds != null) {
-        Text("Metered shutter ${ExposureCalculator.formatSeconds(rawSeconds)} · film correction unavailable", style = MaterialTheme.typography.bodyMedium)
+      if (hasReading && exposureSupported && mode != ExposureMode.MANUAL_MATCH && evDelta != null && abs(evDelta) in 0.15..0.6) {
+        Text("Closest dial setting · ${exposureBalanceLabel(evDelta)} target", style = MaterialTheme.typography.bodyMedium,
+          color = MaterialTheme.colorScheme.onSurfaceVariant)
+      }
+      if (hasReading && !exposureSupported && mode == ExposureMode.APERTURE_PRIORITY && adjustedSeconds != null) {
+        Text("Metered target ${ExposureCalculator.formatSeconds(adjustedSeconds)} · recommendation unavailable", style = MaterialTheme.typography.bodyMedium)
       }
       if (hasReading && exposureGuidance != null) {
         Text(exposureGuidance, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+      }
+      if (stock != null && (exposureGuidance != null || !exposureSupported)) {
+        TextButton(onClick = { showFilmDetails = true }) { Text("Film correction details") }
       }
       if (hasReading && rawSeconds != null && correctedSeconds != null && correctedSeconds >= 1.0) {
         Row(
@@ -241,7 +311,7 @@ fun LightMeterScreen(
           verticalAlignment = Alignment.CenterVertically
         ) {
           Column(Modifier.weight(1f)) {
-            Text("Exposure ${ExposureCalculator.formatSeconds(correctedSeconds)}", style = MaterialTheme.typography.bodyMedium)
+            Text((if (requiresBulb) "Use Bulb · " else "Exposure ") + ExposureCalculator.formatSeconds(correctedSeconds), style = MaterialTheme.typography.bodyMedium)
             if (correctedSeconds > rawSeconds) {
               Text("${stock?.name} · metered ${ExposureCalculator.formatSeconds(rawSeconds)}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
@@ -295,7 +365,8 @@ fun LightMeterScreen(
   Column(modifier.fillMaxSize()) {
     BoxWithConstraints(Modifier.weight(1f)) {
       val wide = maxWidth >= 600.dp && LocalDensity.current.fontScale < 1.5f
-      val viewportHeight = if (wide) 330 else (maxHeight.value - 300f).toInt().coerceIn(160, 320)
+      // Reading-dependent footer changes must not resize the camera and reset its selected area.
+      val viewportHeight = if (wide) 330 else compactViewfinderHeight
       Column(
         modifier = Modifier
           .fillMaxSize()
@@ -303,6 +374,23 @@ fun LightMeterScreen(
           .padding(horizontal = 20.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
       ) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+          TextButton(onClick = { picker = "camera" }, enabled = ready && !saving) {
+            Text(cameraSetup?.name ?: "Camera setup")
+            Icon(Icons.Default.ExpandMore, contentDescription = null)
+          }
+          TextButton(onClick = onOpenRolls, enabled = !saving) {
+            Text(when {
+              roll?.isFinished == true -> "$rollName · finished"
+              roll != null && frameCount >= roll!!.frameCapacity -> "$rollName · full"
+              else -> "$rollName · next frame ${frameCount + 1}"
+            })
+          }
+        }
+        if (rollGuidance != null) {
+          Text(rollGuidance, style = MaterialTheme.typography.bodyMedium)
+          TextButton(onClick = onOpenRolls, enabled = !saving) { Text("Open rolls") }
+        }
         Row(
           modifier = Modifier.fillMaxWidth(),
           horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -339,6 +427,15 @@ fun LightMeterScreen(
 
     Surface(color = MaterialTheme.colorScheme.background) {
       Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        if (held) {
+          val manualRecord = savedEntry?.takeIf { it.isManual }
+          HeldExposureSummary(
+            iso = manualRecord?.iso ?: iso,
+            apertureLabel = manualRecord?.apertureText ?: apertureLabels[apertureIndex],
+            actualSeconds = manualRecord?.correctedSeconds ?: correctedSeconds,
+            manual = manualRecord != null
+          )
+        }
         Button(
           onClick = {
             viewModel.hapticManager.performDialClick(view)
@@ -352,7 +449,7 @@ fun LightMeterScreen(
         if (held && savedEntry == null) {
           OutlinedButton(
             onClick = { viewModel.logExposure() },
-            enabled = ready && !saving && exposureSupported,
+            enabled = ready && !saving && exposureSupported && canSaveRoll,
             modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)
           ) {
             if (saving) {
@@ -362,14 +459,36 @@ fun LightMeterScreen(
             Text(if (saving) "Saving frame…" else "Save frame")
           }
         }
+        if ((!hasReading || !exposureSupported) && savedEntry == null) {
+          TextButton(
+            onClick = {
+              freshManualFrame = false
+              showManualRecord = true
+            },
+            enabled = ready && !saving && canSaveRoll,
+            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
+          ) { Text("Record manual exposure") }
+        }
         savedEntry?.let { saved ->
           Row(
             modifier = Modifier.fillMaxWidth().semantics { liveRegion = LiveRegionMode.Polite },
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
           ) {
-            Text("Frame ${saved.frameNumber} saved", modifier = Modifier.weight(1f))
+            Text("Frame ${saved.frameNumber} saved" + if (saved.isManual) " · manual" else "", modifier = Modifier.weight(1f))
             TextButton(onClick = viewModel::undoLastSavedExposure, enabled = !saving) { Text("Undo") }
+          }
+          if (saved.isManual) {
+            TextButton(
+              enabled = !saving && canSaveRoll,
+              onClick = {
+                if (viewModel.beginNextManualFrame()) {
+                  freshManualFrame = true
+                  showManualRecord = true
+                }
+              },
+              modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
+            ) { Text("Next manual frame") }
           }
         }
 
@@ -388,6 +507,26 @@ fun LightMeterScreen(
       onDismiss = { viewModel.setShowStockPickerSheet(false) }
     )
   }
+  if (showAdjustments) {
+    ExposureAdjustmentsDialog(
+      exposureCompensation = compensation,
+      filterStops = filterStops,
+      onCompensationChanged = viewModel::setExposureCompensation,
+      onFilterStopsChanged = viewModel::setFilterStops,
+      onReset = viewModel::resetExposureAdjustments,
+      onDismiss = { showAdjustments = false }
+    )
+  }
+  if (showFilmDetails) stock?.let { FilmDetailsDialog(it, onDismiss = { showFilmDetails = false }) }
+  if (showManualRecord) {
+    ManualExposureDialog(
+      initialAperture = aperture,
+      initialSeconds = if (freshManualFrame) 0.0 else correctedSeconds ?: rawSeconds ?: selectedSeconds,
+      saving = saving,
+      onSave = viewModel::recordManualExposure,
+      onDismiss = { showManualRecord = false }
+    )
+  }
   if (showTimer) {
     ExposureTimerDialog(
       rawSeconds = rawSeconds ?: 0.0,
@@ -401,14 +540,16 @@ fun LightMeterScreen(
     val formats = CameraFormat.entries
     val focalLengths = (DepthOfFieldCalculator.getCommonFocalLengths(format) + focalLength).distinct().sorted()
     val labels = when (kind) {
+      "camera" -> listOf("Generic camera") + cameraSetups.map { it.name } + "Add camera…"
       "source" -> listOf("Camera · frame metering", "Light sensor", "Sunny 16 · estimate")
       "format" -> formats.map { it.displayName }
       "lens" -> focalLengths.map { "$it mm" }
       "mode" -> listOf("Choose aperture", "Choose shutter", "Manual exposure")
-      "aperture" -> ExposureCalculator.APERTURE_LABELS
-      else -> ExposureCalculator.SHUTTER_LABELS
+      "aperture" -> apertureLabels
+      else -> shutterLabels
     }
     val selected = when (kind) {
+      "camera" -> cameraSetups.indexOfFirst { it.id == cameraSetup?.id } + 1
       "source" -> source.ordinal
       "format" -> formats.indexOf(format)
       "lens" -> focalLengths.indexOf(focalLength)
@@ -418,6 +559,7 @@ fun LightMeterScreen(
     }
     ValuePicker(
       title = when (kind) {
+        "camera" -> "Camera setup"
         "source" -> "Metering source"
         "format" -> "Film format"
         "lens" -> "Lens focal length"
@@ -431,6 +573,13 @@ fun LightMeterScreen(
       onSelect = { index ->
         viewModel.hapticManager.performDialClick(view)
         when (kind) {
+          "camera" -> when (index) {
+            0 -> if (cameraSetup != null) viewModel.selectCameraSetup(null)
+            cameraSetups.size + 1 -> onOpenCameraSetup()
+            else -> cameraSetups.getOrNull(index - 1)?.let { camera ->
+              if (camera.id != cameraSetup?.id) viewModel.selectCameraSetup(camera.id)
+            }
+          }
           "source" -> if (index == 2) onOpenSunny16() else viewModel.setMeasurementSource(MeasurementSource.entries[index])
           "format" -> viewModel.setFormat(formats[index])
           "lens" -> viewModel.setFocalLength(focalLengths[index])
@@ -454,7 +603,8 @@ internal fun ExposureReadout(
   evDelta: Double,
   enabled: Boolean,
   onPickAperture: () -> Unit,
-  onPickShutter: () -> Unit
+  onPickShutter: () -> Unit,
+  resultLabel: String? = null
 ) {
   val manual = mode == ExposureMode.MANUAL_MATCH
   val choosingAperture = mode == ExposureMode.APERTURE_PRIORITY
@@ -463,7 +613,7 @@ internal fun ExposureReadout(
     val result: @Composable () -> Unit = {
       Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(
-          when {
+          resultLabel ?: when {
             manual -> "Exposure balance"
             choosingAperture -> "Recommended shutter"
             else -> "Recommended aperture"
@@ -522,18 +672,42 @@ internal fun exposureBalanceLabel(delta: Double): String = when {
 }
 
 @Composable
-private fun ValuePicker(
+internal fun HeldExposureSummary(iso: Int, apertureLabel: String, actualSeconds: Double?, manual: Boolean = false) {
+  val state = if (manual) "Manual exposure saved" else "Reading held"
+  val shutter = actualSeconds?.let(ExposureCalculator::formatSeconds) ?: "actual shutter not supplied"
+  val spokenShutter = actualSeconds?.let {
+    if (it < 1.0) "1 over ${kotlin.math.round(1.0 / it).toInt()} second" else "${formatExposureInput(it)} seconds"
+  } ?: "actual shutter not supplied"
+  Column(
+    Modifier.fillMaxWidth().clearAndSetSemantics {
+      contentDescription = "$state. ISO $iso. Aperture ${apertureLabel.replace("f/", "f ")}. Shutter $spokenShutter."
+      liveRegion = LiveRegionMode.Polite
+    },
+    verticalArrangement = Arrangement.spacedBy(4.dp)
+  ) {
+    Text(state, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Text("$apertureLabel · $shutter · ISO $iso", style = MaterialTheme.typography.titleMedium)
+  }
+}
+
+@Composable
+internal fun ValuePicker(
   title: String,
   labels: List<String>,
   selected: Int,
   onDismiss: () -> Unit,
   onSelect: (Int) -> Unit
 ) {
+  val firstVisible = (selected - 2).coerceIn(0, labels.lastIndex.coerceAtLeast(0))
+  val listState = rememberLazyListState(initialFirstVisibleItemIndex = firstVisible)
+  LaunchedEffect(selected, labels) {
+    if (labels.isNotEmpty()) listState.scrollToItem(firstVisible)
+  }
   AlertDialog(
     onDismissRequest = onDismiss,
     title = { Text(title) },
     text = {
-      LazyColumn(Modifier.heightIn(max = 360.dp)) {
+      LazyColumn(Modifier.heightIn(max = 360.dp), state = listState) {
         itemsIndexed(labels) { index, label ->
           Surface(
             onClick = { onSelect(index) },

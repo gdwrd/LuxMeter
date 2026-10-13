@@ -17,6 +17,7 @@ import androidx.test.core.app.ApplicationProvider
 import com.example.data.dao.FilmLogDao
 import com.example.data.dao.FilmStockDao
 import com.example.data.model.FilmLogEntry
+import com.example.data.model.CameraSetup
 import com.example.data.model.FilmStock
 import com.example.data.repository.FilmRepository
 import com.example.sensor.ExposureCalculator
@@ -25,6 +26,8 @@ import com.example.ui.components.ExposureTimerDialog
 import com.example.ui.meter.LightMeterViewModel
 import com.example.ui.meter.LightMeterScreen
 import com.example.ui.meter.ExposureMode
+import com.example.ui.meter.MeasurementSource
+import com.example.ui.settings.SettingsScreen
 import com.example.ui.settings.RollsScreen
 import com.example.ui.sunny16.Sunny16GuideScreen
 import com.example.ui.theme.MyApplicationTheme
@@ -32,6 +35,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.map
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -195,6 +199,75 @@ class SupportScreensTest {
     compose.onNodeWithText("Start timer").assertIsEnabled()
   }
 
+  @Test
+  fun finishedRollCanBeReopenedWithoutLosingItsPhysicalFrame() {
+    val model = meter()
+    compose.runOnIdle { model.startNewRoll("Autumn", 24) }
+    compose.runOnIdle { model.setCurrentFrame(8) }
+    compose.runOnIdle { model.finishCurrentRoll() }
+    compose.runOnIdle { model.startNewRoll("Winter", 36) }
+    compose.setContent { MyApplicationTheme { RollsScreen(model) } }
+    compose.onNodeWithText("Finished rolls").assertExists()
+    compose.onNodeWithText("Autumn").performClick()
+    compose.onNodeWithText("Reopen roll").performClick()
+    compose.runOnIdle {
+      assertEquals("Autumn", model.currentRoll.value!!.name)
+      assertEquals(8, model.currentRoll.value!!.lastFrameNumber)
+      assertEquals(24, model.currentRoll.value!!.frameCapacity)
+      assertFalse(model.currentRoll.value!!.isFinished)
+    }
+    compose.onNodeWithText("Finish roll").assertIsEnabled()
+  }
+
+  @Test
+  fun savedNotesAppearWithoutChangingExposureFields() {
+    val model = meter()
+    compose.runOnIdle {
+      model.setFilmStock(hp5)
+      model.setPresetEv100(12.0)
+      model.toggleHold()
+      model.logExposure()
+    }
+    lateinit var before: FilmLogEntry
+    compose.runOnIdle { before = logs.entries.value.single() }
+    compose.setContent { MyApplicationTheme { RollsScreen(model) } }
+    compose.onNodeWithText("Current roll").performClick()
+    compose.runOnIdle { model.updateLogNotes(before.id, "Red door, yellow filter") }
+    compose.onNodeWithText("Red door, yellow filter").assertIsDisplayed()
+    compose.runOnIdle { assertEquals(before.copy(notes = "Red door, yellow filter"), logs.entries.value.single()) }
+  }
+
+  @Test
+  fun settingsCanChangeTheInactiveSourcesCalibration() {
+    val model = meter()
+    compose.runOnIdle {
+      model.setCalibrationOffset(0.5f, MeasurementSource.CAMERA)
+      model.setCalibrationOffset(-1f, MeasurementSource.SENSOR)
+    }
+    compose.setContent { MyApplicationTheme { SettingsScreen(model) } }
+    compose.onNodeWithText("Manual adjustment").performScrollTo().performClick()
+    compose.onNodeWithText("Light sensor").performClick()
+    compose.onNodeWithText(String.format(Locale.getDefault(), "%+.1f EV", -1f)).assertExists()
+    compose.runOnIdle { model.setCalibrationOffset(-1.5f, MeasurementSource.SENSOR) }
+    compose.onNodeWithText(String.format(Locale.getDefault(), "%+.1f EV", -1.5f)).assertExists()
+    compose.runOnIdle { assertEquals(0.5f, model.calibrationOffsetFor(MeasurementSource.CAMERA), 0f) }
+  }
+
+  @Test
+  fun savedCameraCanBeSelectedFromSettings() {
+    val model = meter()
+    compose.runOnIdle {
+      model.saveCameraSetup(CameraSetup(name = "Canon P", minAperture = 2.8, maxAperture = 16.0,
+        shutterSpeeds = "0.008,0.016666666666666666,1.0"))
+    }
+    compose.setContent { MyApplicationTheme { SettingsScreen(model) } }
+    compose.onNodeWithText("Canon P").assertExists()
+    compose.onNodeWithText("Use without a saved camera").performClick()
+    compose.runOnIdle { assertNull(model.currentCameraSetup.value) }
+    compose.onNodeWithText("Canon P").performClick()
+    compose.runOnIdle { assertEquals("Canon P", model.currentCameraSetup.value!!.name) }
+  }
+
   private class TestStocks : FilmStockDao {
     override fun getAllFilmStocks() = MutableStateFlow(listOf(hp5, portra))
     override suspend fun getFilmStockById(id: Int): FilmStock? = null
@@ -209,10 +282,14 @@ class SupportScreensTest {
     override fun getEntriesForRoll(rollId: String) = entries.map { list -> list.filter { it.rollId == rollId } }
     override suspend fun getLatestEntryForRoll(rollId: String) =
       entries.value.filter { it.rollId == rollId }.maxByOrNull { it.frameNumber }
+    private var nextId = 1
     override suspend fun insertLogEntry(entry: FilmLogEntry): Long {
-      val id = entries.value.size + 1
-      entries.value += entry.copy(id = id)
+      val id = if (entry.id > 0) entry.id else nextId++
+      entries.value = entries.value.filterNot { it.id == id } + entry.copy(id = id)
       return id.toLong()
+    }
+    override suspend fun updateLogNotes(id: Int, notes: String) {
+      entries.value = entries.value.map { if (it.id == id) it.copy(notes = notes) else it }
     }
     override suspend fun deleteEntryById(id: Int) { entries.value = entries.value.filterNot { it.id == id } }
     override suspend fun deleteRollEntries(rollId: String) { entries.value = entries.value.filterNot { it.rollId == rollId } }

@@ -69,4 +69,28 @@ class FilmStockReciprocityTest {
     assertNull(delayed.calculateMeteredExposure(4.0))
     assertEquals(5.0, delayed.calculateCorrectedExposure(delayed.calculateMeteredExposure(5.0)!!)!!, 0.000001)
   }
+
+  @Test fun unknownCustomFilmsDoNotInventCorrectionsOrManufacturerSources() {
+    val unknown = film("My film", "My lab", custom = true).copy(hasReciprocityProfile = false)
+    assertNull(unknown.calculateCorrectedExposure(0.5))
+    assertNull(unknown.calculateMeteredExposure(30.0))
+    assertEquals("Unknown correction", unknown.correctionLabel)
+    assertNull(unknown.sourceUrl)
+    assertTrue(unknown.reciprocityGuidance(1.0)!!.contains("unknown"))
+    val tested = unknown.copy(hasReciprocityProfile = true, reciprocityFactor = 1.5)
+    assertEquals("Your profile", tested.correctionLabel)
+    assertEquals(8.0, tested.calculateCorrectedExposure(4.0)!!, 0.000001)
+  }
+
+  @Test fun publishedProfilesExposeTheirSourcesAndLimitsWithoutCallingEstimatesVerified() {
+    val hp5 = film("HP5 Plus 400", "Ilford")
+    assertEquals("Manufacturer guidance", hp5.correctionLabel)
+    assertTrue(hp5.sourceUrl!!.startsWith("https://www.ilfordphoto.com/"))
+    val cineStill = film("CineStill 800T", "CineStill")
+    assertEquals("Estimate", cineStill.correctionLabel)
+    assertTrue(cineStill.rangeText.contains("not a validated"))
+    val velvia = film("Velvia 50", "Fujifilm")
+    assertTrue(velvia.rangeText.contains("magenta"))
+    assertNotNull(velvia.sourceUrl)
+  }
 }

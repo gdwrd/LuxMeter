@@ -2,6 +2,8 @@ package com.example.data.model
 
 import androidx.room.Entity
 import androidx.room.PrimaryKey
+import androidx.room.ColumnInfo
+import androidx.room.Ignore
 import com.example.sensor.ExposureCalculator
 import kotlin.math.ln
 import kotlin.math.pow
@@ -18,9 +20,51 @@ data class FilmStock(
   val reciprocityThresholdSec: Double = 1.0,
   val description: String,
   val badgeStyle: String, // "PORTRA", "TRI_X", "GOLD", "HP5", "CINESTILL", "FUJI_VELVIA", "FUJI_SUPERIA", "DELTA", "EKTAR", "CUSTOM"
-  val isCustom: Boolean = false
+  val isCustom: Boolean = false,
+  @ColumnInfo(defaultValue = "1") val hasReciprocityProfile: Boolean = true
 ) {
   private fun profile(): String = if (isCustom) "custom" else "$brand/$name"
+
+  @get:Ignore
+  val correctionLabel: String
+    get() = when {
+      !hasReciprocityProfile -> "Unknown correction"
+      isCustom -> "Your profile"
+      profile() == "CineStill/CineStill 800T" -> "Estimate"
+      profile() == "Kodak/Tri-X 400" -> "Manufacturer table · interpolation estimated"
+      sourceUrl != null -> "Manufacturer guidance"
+      else -> "Unknown correction"
+    }
+
+  @get:Ignore
+  val sourceUrl: String?
+    get() = when (profile()) {
+      "Ilford/HP5 Plus 400", "Ilford/Delta 3200" -> "https://www.ilfordphoto.com/wp/wp-content/uploads/2024/05/Reciprocity-Failure-Compensation-v2.pdf"
+      "Kodak/Tri-X 400" -> "https://www.kodakprofessional.com/sites/default/files/wysiwyg/pro/resources/f4017_TriX.pdf"
+      "CineStill/CineStill 800T" -> "https://help.cinestillfilm.com/hc/en-us/articles/4407453578893-What-are-the-reciprocity-failure-details-for-CineStill-films"
+      "Kodak/Portra 400" -> "https://www.kodakprofessional.com/sites/default/files/wysiwyg/pro/resources/e4050_portra_400.pdf"
+      "Kodak/Gold 200" -> "https://www.kodakprofessional.com/sites/default/files/wysiwyg/pro/resources/E7022_Gold_200.pdf"
+      "Kodak/Ektar 100" -> "https://www.kodakprofessional.com/sites/default/files/2025-07/e4046.pdf"
+      "Fujifilm/Superia X-TRA 400" -> "https://asset.fujifilm.com/www/us/files/2025-06/8abba3dd9d004f44d1e9c7fdbdf5c520/films_superia-xtra400_datasheet_01.pdf"
+      "Fujifilm/Velvia 50" -> "https://www.fujifilm.com.hk/products/professional_films/pdf/velvia_50_datasheet.pdf"
+      else -> null
+    }
+
+  @get:Ignore
+  val rangeText: String
+    get() = when {
+      !hasReciprocityProfile -> "No timed correction supplied. You can record the settings you choose."
+      isCustom -> "Your t^$reciprocityFactor correction above ${reciprocityThresholdSec}s; the app limits timing to one day."
+      else -> when (profile()) {
+        "Ilford/HP5 Plus 400", "Ilford/Delta 3200" -> "No correction through 1s; manufacturer's power correction above 1s. App limit: one day."
+        "Kodak/Tri-X 400" -> "Timed correction for 1/1000s–100s metered. Development changes may also be needed."
+        "CineStill/CineStill 800T" -> "Approximate t^1.3 above 1s. Bracket exposures; this is not a validated time table."
+        "Kodak/Portra 400", "Kodak/Gold 200", "Kodak/Ektar 100" -> "No correction from 1/10,000s to 1s. Test longer exposures; no timed correction is published."
+        "Fujifilm/Superia X-TRA 400" -> "No correction from 1/4000s to 2s. Longer exposures need Fujifilm's aperture guidance."
+        "Fujifilm/Velvia 50" -> "No correction from 1/4000s to 1s. Longer exposures need aperture and magenta-filter guidance."
+        else -> "No published correction is linked to this film."
+      }
+    }
 
   /** Null means the film's published guidance does not support a timed recommendation. */
   fun calculateCorrectedExposure(rawSeconds: Double): Double? = exposure(rawSeconds, inverse = false)
@@ -29,6 +73,7 @@ data class FilmStock(
   fun calculateMeteredExposure(actualSeconds: Double): Double? = exposure(actualSeconds, inverse = true)
 
   private fun exposure(seconds: Double, inverse: Boolean): Double? {
+    if (!hasReciprocityProfile) return null
     if (!seconds.isFinite() || seconds <= 0.0 || seconds > ExposureCalculator.MAX_EXPOSURE_SECONDS) return null
     val result = when (profile()) {
       "custom" -> powerExposure(seconds, inverse, reciprocityFactor, reciprocityThresholdSec)
@@ -46,6 +91,7 @@ data class FilmStock(
   }
 
   fun reciprocityGuidance(rawSeconds: Double): String? {
+    if (!hasReciprocityProfile) return "Reciprocity correction is unknown for this film. Record your chosen settings manually; no timed recommendation is available."
     if (!rawSeconds.isFinite() || rawSeconds <= 0.0 || rawSeconds > ExposureCalculator.MAX_EXPOSURE_SECONDS) {
       return "Exposure is outside the supported range."
     }

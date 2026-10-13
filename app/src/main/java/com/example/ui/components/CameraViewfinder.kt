@@ -16,6 +16,7 @@ import android.os.Build
 import android.os.SystemClock
 import android.provider.Settings
 import android.view.Surface
+import android.view.ViewOutlineProvider
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.camera2.interop.Camera2CameraControl
@@ -30,8 +31,10 @@ import androidx.camera.core.UseCaseGroup
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -62,8 +65,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
@@ -103,7 +111,8 @@ fun CameraViewfinder(
   modifier: Modifier = Modifier,
   currentEv: Double = 12.0,
   viewportHeightDp: Int = 220,
-  onCameraStatusChanged: (String?, Boolean) -> Unit = { _, _ -> }
+  onCameraStatusChanged: (String?, Boolean) -> Unit = { _, _ -> },
+  onMeteringAreaChanged: () -> Unit = {}
 ) {
   val context = LocalContext.current
   val lifecycleOwner = LocalLifecycleOwner.current
@@ -114,12 +123,15 @@ fun CameraViewfinder(
       implementationMode = PreviewView.ImplementationMode.COMPATIBLE
       scaleType = PreviewView.ScaleType.FILL_CENTER
       importantForAccessibility = android.view.View.IMPORTANT_FOR_ACCESSIBILITY_NO
+      clipToOutline = true
+      outlineProvider = ViewOutlineProvider.BOUNDS
     }
   }
   val heldFrame: HeldCameraFrame = viewModel { HeldCameraFrame() }
   val locked by rememberUpdatedState(isLocked)
   val onReading by rememberUpdatedState(onMeasuredEvChanged)
   val onStatus by rememberUpdatedState(onCameraStatusChanged)
+  val onAreaChanged by rememberUpdatedState(onMeteringAreaChanged)
   var hasPermission by remember {
     mutableStateOf(ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED)
   }
@@ -131,6 +143,26 @@ fun CameraViewfinder(
   var measuring by remember { mutableStateOf(true) }
   var canRetry by remember { mutableStateOf(false) }
   var framingLabel by remember { mutableStateOf("Phone framing") }
+  var selectedX by rememberSaveable(format, focalLengthMm) { mutableStateOf<Float?>(null) }
+  var selectedY by rememberSaveable(format, focalLengthMm) { mutableStateOf(0.5f) }
+  var previousFrameWidth by rememberSaveable(format, focalLengthMm) { mutableIntStateOf(0) }
+  var previousFrameHeight by rememberSaveable(format, focalLengthMm) { mutableIntStateOf(0) }
+  var selectionVersion by remember { mutableIntStateOf(0) }
+  var canSelectMeteringArea by remember { mutableStateOf(false) }
+  val selectedArea = selectedX?.let { CameraMetering.selectedAreaAt(it, selectedY) }
+
+  fun selectArea(x: Float?, y: Float = 0.5f) {
+    if (locked || !hasPermission || !resumed || !canSelectMeteringArea) return
+    if (x != null && CameraMetering.selectedAreaAt(x, y) == null) return
+    selectedX = x
+    selectedY = y
+    selectionVersion++
+    cameraStatus = if (x == null) "Measuring frame" else "Measuring selected area"
+    measuring = true
+    canRetry = false
+    onAreaChanged()
+    hapticManager.performDialClick(previewView)
+  }
   val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
     hasPermission = granted
     permissionRequested = true
@@ -166,6 +198,7 @@ fun CameraViewfinder(
   }
 
   DisposableEffect(hasPermission, resumed, previewSize, format, focalLengthMm, retry) {
+    canSelectMeteringArea = false
     val disposed = AtomicBoolean(false)
     var provider: ProcessCameraProvider? = null
     var preview: Preview? = null
@@ -173,6 +206,7 @@ fun CameraViewfinder(
     var lastCaptureMs = SystemClock.elapsedRealtime()
     var lastProcessedMs = 0L
     var requestedRegion: Rect? = null
+    var requestedSelectionVersion = -1
     var regionRequestedMs = 0L
     var lastValidatedReadingMs = 0L
     var zoomReady = false
@@ -243,16 +277,20 @@ fun CameraViewfinder(
                           val sensor = activeArray
                           val transform = previewView.sensorToViewTransform
                           val crop = result.get(CaptureResult.SCALER_CROP_REGION)
+                          val area = selectedX?.let { CameraMetering.selectedAreaAt(it, selectedY) }
+                          val measuringLabel = if (area == null) "Measuring frame" else "Measuring selected area"
                           val region = if (sensor != null && transform != null && crop != null) {
-                            CameraMetering.frameRegion(previewView.width, previewView.height, transform, sensor, crop)
+                            CameraMetering.frameRegion(previewView.width, previewView.height, transform, sensor, crop, area)
                           } else null
                           val originalRegion = requestedRegion
                           if (region == null) {
                             unavailable("Camera framing unavailable")
-                          } else if (CameraMetering.needsRegionUpdate(originalRegion, region)) {
+                          } else if (requestedSelectionVersion != selectionVersion || CameraMetering.needsRegionUpdate(originalRegion, region)) {
                             requestedRegion = region
+                            requestedSelectionVersion = selectionVersion
+                            val submittedSelectionVersion = selectionVersion
                             regionRequestedMs = now
-                            cameraStatus = "Measuring frame"
+                            cameraStatus = measuringLabel
                             measuring = true
                             canRetry = false
                             val options = CaptureRequestOptions.Builder()
@@ -261,8 +299,10 @@ fun CameraViewfinder(
                             camera?.let { activeCamera ->
                               val future = Camera2CameraControl.from(activeCamera.cameraControl).setCaptureRequestOptions(options)
                               future.addListener({
-                                if (!disposed.get()) {
-                                  try { future.get() } catch (_: Exception) { unavailable("Frame metering unavailable") }
+                                if (!disposed.get() && selectionVersion == submittedSelectionVersion && requestedRegion == region) {
+                                  try { future.get() } catch (_: Exception) {
+                                    unavailable(if (area == null) "Frame metering unavailable" else "Selected-area metering unavailable. Use Whole frame.")
+                                  }
                                 }
                               }, mainExecutor)
                             }
@@ -275,16 +315,17 @@ fun CameraViewfinder(
                             when {
                               !regionMatches -> {
                                 if (unsettledMs > 3000L) {
-                                  unavailable("This camera cannot meter the outlined frame")
+                                  unavailable(if (area == null) "This camera cannot meter the outlined frame"
+                                    else "This camera cannot meter the selected area. Use Whole frame.")
                                 } else {
-                                  cameraStatus = "Measuring frame"
+                                  cameraStatus = measuringLabel
                                   measuring = true
                                   canRetry = false
                                 }
                               }
                               aeState == CaptureResult.CONTROL_AE_STATE_FLASH_REQUIRED -> unavailable("Too dark for a reliable camera reading")
                               aeState != CaptureResult.CONTROL_AE_STATE_CONVERGED -> {
-                                cameraStatus = "Measuring frame"
+                                cameraStatus = measuringLabel
                                 measuring = true
                                 canRetry = unsettledMs > 5000L
                               }
@@ -348,6 +389,7 @@ fun CameraViewfinder(
                       try {
                         zoomFuture.get()
                         zoomReady = true
+                        canSelectMeteringArea = supportsFrameMetering && activeArray != null
                       } catch (_: Exception) {
                         unavailable("Camera zoom unavailable")
                       }
@@ -381,62 +423,105 @@ fun CameraViewfinder(
     }
   }
 
-  BoxWithConstraints(
-    modifier = modifier.fillMaxWidth().height(viewportHeightDp.dp).clip(RoundedCornerShape(20.dp)).background(Color.Black),
-    contentAlignment = Alignment.Center
-  ) {
-    val availableWidth = (maxWidth - 32.dp).coerceAtLeast(1.dp)
-    val availableHeight = (maxHeight - 48.dp).coerceAtLeast(1.dp)
-    val frameWidth = minOf(availableWidth, availableHeight * format.aspectRatioFloat)
-    val frameHeight = frameWidth / format.aspectRatioFloat
-    Box(
-      modifier = Modifier.size(frameWidth, frameHeight).border(1.dp, Color.White.copy(alpha = 0.85f))
+  Column(modifier = modifier) {
+    BoxWithConstraints(
+      modifier = Modifier.fillMaxWidth().height(viewportHeightDp.dp).clip(RoundedCornerShape(20.dp)).background(Color.Black),
+      contentAlignment = Alignment.Center
     ) {
-      AndroidView(
-        factory = { previewView },
-        // Native camera pixels must not remain live around the held bitmap.
-        update = { it.alpha = if (isLocked) 0f else 1f },
-        modifier = Modifier.fillMaxSize().onSizeChanged { previewSize = it }
-      )
-      if (isLocked) {
-        val bitmap = heldFrame.bitmap
-        if (bitmap != null) {
-          Image(bitmap.asImageBitmap(), contentDescription = "Held camera frame", modifier = Modifier.fillMaxSize(), contentScale = ContentScale.FillBounds)
-        } else {
-          Box(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
-            Text("Reading held\nPreview unavailable", color = Color.White, textAlign = TextAlign.Center, style = MaterialTheme.typography.bodyMedium)
-          }
-        }
-      }
-    }
-    if (!hasPermission || (canRetry && !isLocked)) {
-      Column(
-        modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.9f)).verticalScroll(rememberScrollState()).padding(20.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterVertically)
+      val availableWidth = (maxWidth - 32.dp).coerceAtLeast(1.dp)
+      val availableHeight = (maxHeight - 48.dp).coerceAtLeast(1.dp)
+      val frameWidth = minOf(availableWidth, availableHeight * format.aspectRatioFloat)
+      val frameHeight = frameWidth / format.aspectRatioFloat
+      Box(
+        modifier = Modifier.size(frameWidth, frameHeight).clipToBounds().border(1.dp, Color.White.copy(alpha = 0.85f))
       ) {
-        Text(cameraStatus ?: "Camera unavailable", color = Color.White, style = MaterialTheme.typography.bodyLarge, textAlign = TextAlign.Center)
-        if (!hasPermission) {
-          Text("Use the rear camera to meter the scene inside the frame.", color = Color.White.copy(alpha = 0.75f), style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center)
-          Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = { permissionLauncher.launch(Manifest.permission.CAMERA) }) { Text("Enable camera") }
-            if (permissionRequested) {
-              TextButton(onClick = {
-                context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}")))
-              }) { Text("Settings", color = Color.White) }
+        AndroidView(
+          factory = { previewView },
+          // Native camera pixels must not remain live around the held bitmap.
+          update = { it.alpha = if (isLocked) 0f else 1f },
+          modifier = Modifier.fillMaxSize().onSizeChanged {
+            val changed = previousFrameWidth > 0 && previousFrameHeight > 0 &&
+              (previousFrameWidth != it.width || previousFrameHeight != it.height)
+            if (changed && !locked && selectedX != null) {
+              selectedX = null
+              selectionVersion++
+              onAreaChanged()
+            }
+            previousFrameWidth = it.width
+            previousFrameHeight = it.height
+            previewSize = it
+          }
+        )
+        if (isLocked) {
+          val bitmap = heldFrame.bitmap
+          if (bitmap != null) {
+            Image(bitmap.asImageBitmap(), contentDescription = "Held camera frame", modifier = Modifier.fillMaxSize(), contentScale = ContentScale.FillBounds)
+          } else {
+            Box(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
+              Text("Reading held\nPreview unavailable", color = Color.White, textAlign = TextAlign.Center, style = MaterialTheme.typography.bodyMedium)
             }
           }
-        } else {
-          Button(onClick = { retry++ }) { Text("Try again") }
+        }
+        Canvas(
+          Modifier.fillMaxSize().pointerInput(isLocked, format, focalLengthMm) {
+            detectTapGestures { point ->
+              if (!canRetry && size.width > 0 && size.height > 0) {
+                selectArea(point.x / size.width, point.y / size.height)
+              }
+            }
+          }
+        ) {
+          selectedArea?.let { area ->
+            val position = Offset(area.left * size.width, area.top * size.height)
+            val areaSize = Size(area.width() * size.width, area.height() * size.height)
+            drawRect(Color.Black, position, areaSize, style = Stroke(5.dp.toPx()))
+            drawRect(Color.White, position, areaSize, style = Stroke(2.dp.toPx()))
+          }
         }
       }
-    } else {
-      Text(
-        text = if (isLocked) "Frame held" else cameraStatus ?: framingLabel,
-        color = Color.White,
-        style = MaterialTheme.typography.labelMedium,
-        modifier = Modifier.align(Alignment.BottomCenter).background(Color.Black.copy(alpha = 0.8f), RoundedCornerShape(8.dp)).padding(horizontal = 10.dp, vertical = 4.dp)
-      )
+      if (!hasPermission || (canRetry && !isLocked)) {
+        Column(
+          modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.9f)).verticalScroll(rememberScrollState()).padding(20.dp),
+          horizontalAlignment = Alignment.CenterHorizontally,
+          verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterVertically)
+        ) {
+          Text(cameraStatus ?: "Camera unavailable", color = Color.White, style = MaterialTheme.typography.bodyLarge, textAlign = TextAlign.Center)
+          if (!hasPermission) {
+            Text("Use the rear camera to meter the scene inside the frame.", color = Color.White.copy(alpha = 0.75f), style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+              Button(onClick = { permissionLauncher.launch(Manifest.permission.CAMERA) }) { Text("Enable camera") }
+              if (permissionRequested) {
+                TextButton(onClick = {
+                  context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}")))
+                }) { Text("Settings", color = Color.White) }
+              }
+            }
+          } else {
+            Button(onClick = { retry++ }) { Text("Try again") }
+          }
+        }
+      } else {
+        Text(
+          text = if (isLocked) {
+            if (selectedArea == null) "Frame held" else "Selected area held"
+          } else cameraStatus ?: if (selectedArea == null) framingLabel else "Selected area",
+          color = Color.White,
+          style = MaterialTheme.typography.labelMedium,
+          modifier = Modifier.align(Alignment.BottomCenter).background(Color.Black.copy(alpha = 0.8f), RoundedCornerShape(8.dp)).padding(horizontal = 10.dp, vertical = 4.dp)
+        )
+      }
+    }
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+      TextButton(
+        onClick = { selectArea(0.5f, 0.5f) },
+        modifier = Modifier.weight(1f),
+        enabled = !isLocked && hasPermission && resumed && canSelectMeteringArea
+      ) { Text("Meter centre") }
+      TextButton(
+        onClick = { selectArea(null) },
+        modifier = Modifier.weight(1f),
+        enabled = selectedArea != null && !isLocked && hasPermission && resumed && canSelectMeteringArea
+      ) { Text("Whole frame") }
     }
   }
 }

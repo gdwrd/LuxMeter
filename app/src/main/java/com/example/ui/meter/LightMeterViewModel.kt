@@ -6,6 +6,8 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.AppDatabase
 import com.example.data.model.CameraFormat
+import com.example.data.model.CameraSetup
+import com.example.data.model.FilmRoll
 import com.example.data.model.FilmLogEntry
 import com.example.data.model.FilmStock
 import com.example.data.repository.FilmRepository
@@ -21,9 +23,13 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.util.UUID
 import kotlin.math.log2
 import kotlin.math.abs
+import kotlin.math.pow
+import kotlin.math.roundToInt
 
 enum class ExposureMode(val label: String, val description: String) {
   APERTURE_PRIORITY("A", "Aperture Priority — turn Aperture, meter sets Shutter"),
@@ -41,9 +47,8 @@ class LightMeterViewModel @JvmOverloads constructor(
 
   private val preferences = application.getSharedPreferences("meter_setup", Context.MODE_PRIVATE)
   private val deviceCalibration = application.getSharedPreferences("meter_device_calibration", Context.MODE_PRIVATE)
-  private val repository = repositoryOverride ?: AppDatabase.getDatabase(application).let {
-    FilmRepository(it.filmStockDao(), it.filmLogDao())
-  }
+  private val repository = repositoryOverride ?: AppDatabase.getDatabase(application).repository()
+  private val rollWrites = Mutex()
   val sensorManager = LightSensorManager(application)
   val hapticManager = HapticManager(application)
   private var meteringActive = true
@@ -68,6 +73,20 @@ class LightMeterViewModel @JvmOverloads constructor(
   val filmAddedId = _filmAddedId.asStateFlow()
   private val _setupReady = MutableStateFlow(false)
   val setupReady = _setupReady.asStateFlow()
+  private val _currentCameraSetup = MutableStateFlow<CameraSetup?>(null)
+  val currentCameraSetup = _currentCameraSetup.asStateFlow()
+  private val _currentRoll = MutableStateFlow<FilmRoll?>(null)
+  val currentRoll = _currentRoll.asStateFlow()
+  private val _isSavingCameraSetup = MutableStateFlow(false)
+  val isSavingCameraSetup = _isSavingCameraSetup.asStateFlow()
+  private val _cameraSetupSavedId = MutableStateFlow<Int?>(null)
+  val cameraSetupSavedId = _cameraSetupSavedId.asStateFlow()
+  private val _exposureCompensation = MutableStateFlow(preferences.getFloat("exposure_compensation", 0f)
+    .toDouble().takeIf { it.isFinite() && it in -3.0..3.0 } ?: 0.0)
+  val exposureCompensation = _exposureCompensation.asStateFlow()
+  private val _filterStops = MutableStateFlow(preferences.getFloat("filter_stops", 0f)
+    .toDouble().takeIf { it.isFinite() && it in 0.0..16.0 } ?: 0.0)
+  val filterStops = _filterStops.asStateFlow()
 
   // Reactive DB streams
   val allStocks: StateFlow<List<FilmStock>> = repository.allFilmStocks
@@ -75,6 +94,24 @@ class LightMeterViewModel @JvmOverloads constructor(
 
   val allLogs: StateFlow<List<FilmLogEntry>> = repository.allLogEntries
     .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+  val allCameraSetups: StateFlow<List<CameraSetup>> = repository.allCameraSetups
+    .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+  val allRolls: StateFlow<List<FilmRoll>> = repository.allRolls
+    .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+  val availableApertures: List<Double>
+    get() = _currentCameraSetup.value?.let { camera ->
+      (ExposureCalculator.APERTURE_VALUES.filter { it in camera.minAperture..camera.maxAperture } +
+        listOf(camera.minAperture, camera.maxAperture)).distinct().sorted()
+    } ?: ExposureCalculator.APERTURE_VALUES
+  val availableShutterSeconds: List<Double>
+    get() = _currentCameraSetup.value?.let { ExposureCalculator.parseShutterSpeeds(it.shutterSpeeds) }
+      ?: ExposureCalculator.SHUTTER_SECONDS
+  val apertureLabels: List<String> get() = availableApertures.map(ExposureCalculator::formatAperture)
+  val shutterLabels: List<String> get() = availableShutterSeconds.map {
+    val standard = ExposureCalculator.SHUTTER_SECONDS.indexOf(it)
+    if (standard >= 0) ExposureCalculator.SHUTTER_LABELS[standard] else ExposureCalculator.formatSeconds(it)
+  }
 
   // Light meter state
   private val _selectedFormat = MutableStateFlow(
@@ -107,9 +144,13 @@ class LightMeterViewModel @JvmOverloads constructor(
     .coerceIn(0, ExposureCalculator.SHUTTER_SECONDS.lastIndex))
   val selectedShutterIndex: StateFlow<Int> = _selectedShutterIndex.asStateFlow()
 
-  private val _calibrationOffsetEv = MutableStateFlow(deviceCalibration.getFloat("calibration", 0f)
+  private val _calibrationOffsetEv = MutableStateFlow(deviceCalibration.getFloat("camera", deviceCalibration.getFloat("calibration", 0f))
     .takeIf { it.isFinite() }?.coerceIn(-3f, 3f) ?: 0f)
   val calibrationOffsetEv: StateFlow<Float> = _calibrationOffsetEv.asStateFlow()
+  private val _calibrationOffsets = MutableStateFlow(mapOf(
+    MeasurementSource.CAMERA to calibrationOffsetFor(MeasurementSource.CAMERA),
+    MeasurementSource.SENSOR to calibrationOffsetFor(MeasurementSource.SENSOR)))
+  val calibrationOffsets = _calibrationOffsets.asStateFlow()
 
   fun onOpticalEvMeasured(
     measuredEv: Double,
@@ -165,7 +206,7 @@ class LightMeterViewModel @JvmOverloads constructor(
   }
 
   fun setFocusToHyperfocal() {
-    val currentAp = ExposureCalculator.APERTURE_VALUES[_selectedApertureIndex.value]
+    val currentAp = availableApertures[_selectedApertureIndex.value]
     val dof = DepthOfFieldCalculator.calculate(
       _focalLengthMm.value.toDouble(),
       currentAp,
@@ -177,7 +218,7 @@ class LightMeterViewModel @JvmOverloads constructor(
   }
 
   fun getDofResult(): DofResult {
-    val currentAp = ExposureCalculator.APERTURE_VALUES[_selectedApertureIndex.value]
+    val currentAp = availableApertures[_selectedApertureIndex.value]
     return DepthOfFieldCalculator.calculate(
       _focalLengthMm.value.toDouble(),
       currentAp,
@@ -201,10 +242,29 @@ class LightMeterViewModel @JvmOverloads constructor(
     }
     viewModelScope.launch {
       try {
-        _selectedFilmStock.value = preferences.getInt("stock_id", -1)
-          .takeIf { it >= 0 }?.let { repository.getFilmStock(it) }
-        _activeRollFrameCount.value = maxOf(preferences.getInt("roll_frame_count", 0),
+        val adoptingLegacyRoll = !preferences.getBoolean("rolls_v2", false)
+        val persistedRoll = repository.getRoll(_currentRollId.value)
+        val cameraId = persistedRoll?.cameraSetupId ?: preferences.getInt("camera_id", -1).takeIf { it >= 0 }
+        _currentCameraSetup.value = cameraId?.let { repository.getCameraSetup(it) }
+        restoreExposureValues()
+        _selectedFilmStock.value = (if (adoptingLegacyRoll) preferences.getInt("stock_id", -1).takeIf { it >= 0 }
+          else persistedRoll?.filmStockId ?: preferences.getInt("stock_id", -1).takeIf { it >= 0 })
+          ?.let { repository.getFilmStock(it) }
+        if (persistedRoll != null && !adoptingLegacyRoll) {
+          _currentRollName.value = persistedRoll.name
+          _customIso.value = persistedRoll.iso
+          _selectedFormat.value = CameraFormat.entries.firstOrNull { it.name == persistedRoll.format } ?: _selectedFormat.value
+          _focalLengthMm.value = persistedRoll.focalLengthMm
+        }
+        _activeRollFrameCount.value = maxOf(persistedRoll?.lastFrameNumber ?: 0, preferences.getInt("roll_frame_count", 0),
           repository.getLatestEntryForRoll(_currentRollId.value)?.frameNumber ?: 0)
+        _currentRoll.value = (if (adoptingLegacyRoll) rollFromSetup().copy(
+          frameCapacity = maxOf(_selectedFormat.value.standardFramesPerRoll, _activeRollFrameCount.value),
+          createdAt = persistedRoll?.createdAt ?: System.currentTimeMillis())
+          else persistedRoll ?: rollFromSetup()).copy(lastFrameNumber = _activeRollFrameCount.value,
+          isFinished = if (!adoptingLegacyRoll) persistedRoll?.isFinished ?: false else false)
+        // Version 1 kept the active roll only in preferences; adopt it without changing its frames.
+        repository.saveRoll(_currentRoll.value!!)
         _setupReady.value = true
         persistSetup()
       } catch (error: Exception) {
@@ -229,11 +289,74 @@ class LightMeterViewModel @JvmOverloads constructor(
       .putString("mode", _exposureMode.value.name)
       .putInt("aperture", _selectedApertureIndex.value)
       .putInt("shutter", _selectedShutterIndex.value)
+      .putString("aperture_value", availableApertures[_selectedApertureIndex.value].toString())
+      .putString("shutter_seconds", availableShutterSeconds[_selectedShutterIndex.value].toString())
+      .putInt("camera_id", _currentCameraSetup.value?.id ?: -1)
+      .putFloat("exposure_compensation", _exposureCompensation.value.toFloat())
+      .putFloat("filter_stops", _filterStops.value.toFloat())
       .putString("roll_id", _currentRollId.value)
       .putString("roll_name", _currentRollName.value)
       .putInt("roll_frame_count", _activeRollFrameCount.value)
       .putBoolean("haptics", hapticManager.isHapticsEnabled)
+      .putBoolean("rolls_v2", true)
       .apply()
+    val roll = _currentRoll.value?.let { current -> rollFromSetup(current) } ?: return
+    _currentRoll.value = roll
+    viewModelScope.launch {
+      try {
+        rollWrites.withLock {
+          val latest = _currentRoll.value?.takeIf { it.id == roll.id } ?: roll
+          repository.saveRoll(latest)
+        }
+      } catch (error: Exception) {
+        if (error is CancellationException) throw error
+        _userMessage.value = "Could not save your roll setup. Try again before closing the app."
+      }
+    }
+  }
+
+  private fun rollFromSetup(existing: FilmRoll? = null): FilmRoll {
+    // A new meter setup must not relabel a roll that already contains photographs.
+    if (existing != null && existing.lastFrameNumber > 0 && !setupMatchesRoll(existing)) return existing
+    return FilmRoll(
+    id = _currentRollId.value, name = _currentRollName.value,
+    filmStockId = _selectedFilmStock.value?.id,
+    filmStockName = _selectedFilmStock.value?.name ?: existing?.filmStockName.orEmpty(),
+    iso = activeIso, format = _selectedFormat.value.name,
+    cameraSetupId = _currentCameraSetup.value?.id, focalLengthMm = _focalLengthMm.value,
+    frameCapacity = existing?.frameCapacity ?: _selectedFormat.value.standardFramesPerRoll,
+    lastFrameNumber = _activeRollFrameCount.value, isFinished = existing?.isFinished ?: false,
+    createdAt = existing?.createdAt ?: System.currentTimeMillis())
+  }
+
+  private fun setupMatchesRoll(roll: FilmRoll): Boolean =
+    (roll.cameraSetupId == null || roll.cameraSetupId == _currentCameraSetup.value?.id) &&
+      roll.format == _selectedFormat.value.name &&
+      (roll.filmStockId == null || _selectedFilmStock.value == null || roll.filmStockId == _selectedFilmStock.value?.id)
+
+  fun getCurrentRollGuidance(): String? {
+    val roll = _currentRoll.value ?: return null
+    return when {
+      roll.isFinished -> "This roll is finished. Continue it or start a new roll to save frames."
+      roll.lastFrameNumber > 0 && !setupMatchesRoll(roll) -> "Choose or start a roll for this camera and film before saving."
+      roll.lastFrameNumber >= roll.frameCapacity -> "This roll is full. Start a new roll or update its capacity."
+      else -> null
+    }
+  }
+
+  fun canSaveToCurrentRoll(): Boolean = _setupReady.value && _currentRoll.value != null && getCurrentRollGuidance() == null
+
+  private fun restoreExposureValues() {
+    val aperture = preferences.getString("aperture_value", null)?.toDoubleOrNull()
+      ?: ExposureCalculator.APERTURE_VALUES[preferences.getInt("aperture", 7).coerceIn(0, ExposureCalculator.APERTURE_VALUES.lastIndex)]
+    val shutter = preferences.getString("shutter_seconds", null)?.toDoubleOrNull()
+      ?: ExposureCalculator.SHUTTER_SECONDS[preferences.getInt("shutter", 6).coerceIn(0, ExposureCalculator.SHUTTER_SECONDS.lastIndex)]
+    _selectedApertureIndex.value = nearest(availableApertures, aperture)
+    _selectedShutterIndex.value = nearest(availableShutterSeconds, shutter)
+  }
+
+  private fun nearest(values: List<Double>, value: Double): Int = values.indices.minBy {
+    abs(log2(values[it]) - log2(value.takeIf { number -> number.isFinite() && number > 0.0 } ?: values.first()))
   }
 
   private fun invalidateReading() {
@@ -242,6 +365,10 @@ class LightMeterViewModel @JvmOverloads constructor(
     _readingStatus.value = ReadingStatus.WAITING
     _readingMessage.value = null
     _savedEntry.value = null
+  }
+
+  fun invalidateCameraReading() {
+    if (_measurementSource.value == MeasurementSource.CAMERA && !sensorManager.isLocked.value) invalidateReading()
   }
 
   private fun acceptReading(ev100: Double, measuredLux: Float? = null) {
@@ -274,6 +401,7 @@ class LightMeterViewModel @JvmOverloads constructor(
     sensorManager.setLocked(false)
     sensorManager.resetReadings()
     _measurementSource.value = source
+    _calibrationOffsetEv.value = calibrationOffsetFor(source)
     invalidateReading()
     if (meteringActive && source == MeasurementSource.SENSOR) startSensor()
   }
@@ -321,31 +449,110 @@ class LightMeterViewModel @JvmOverloads constructor(
   fun computeEvForActiveIso(): Double {
     val ev100 = computeEv100()
     if (!ev100.isFinite()) return Double.NaN
-    return ExposureCalculator.ev100ToEvForIso(ev100, activeIso)
+    return ExposureCalculator.ev100ToEvForIso(ev100, activeIso) - _exposureCompensation.value - _filterStops.value
   }
 
+  fun getBaseMeteredSeconds(): Double? {
+    val ev = computeEv100()
+    if (!ev.isFinite()) return null
+    val aperture = availableApertures[_selectedApertureIndex.value]
+    return (aperture * aperture / 2.0.pow(ExposureCalculator.ev100ToEvForIso(ev, activeIso)))
+      .takeIf { it.isFinite() && it > 0.0 }
+  }
+
+  fun getFilteredMeteredSeconds(): Double? = if (_exposureMode.value == ExposureMode.APERTURE_PRIORITY) {
+    getBaseMeteredSeconds()?.let { it * 2.0.pow(_exposureCompensation.value + _filterStops.value) }
+      ?.takeIf { it.isFinite() && it > 0.0 && it <= ExposureCalculator.MAX_EXPOSURE_SECONDS }
+  } else getRawShutterSeconds()
+
   fun getRawShutterSeconds(): Double? {
-    val selected = ExposureCalculator.SHUTTER_SECONDS[_selectedShutterIndex.value]
+    val selected = availableShutterSeconds[_selectedShutterIndex.value]
     val stock = _selectedFilmStock.value
-    return if (_exposureMode.value == ExposureMode.APERTURE_PRIORITY || stock == null) selected
+    return if (_exposureMode.value == ExposureMode.APERTURE_PRIORITY) {
+      val target = getFilteredMeteredSeconds() ?: return null
+      val desired = if (stock == null) target else stock.calculateCorrectedExposure(target)
+      when {
+        desired == null -> target
+        _currentCameraSetup.value?.allowsBulb != false && desired >= 1.0 -> target
+        stock == null -> selected
+        else -> stock.calculateMeteredExposure(selected)
+      }
+    } else if (stock == null) selected
       else stock.calculateMeteredExposure(selected)
   }
 
   fun getCorrectedShutterSeconds(): Double? {
     val raw = getRawShutterSeconds() ?: return null
     val stock = _selectedFilmStock.value
-    return if (_exposureMode.value != ExposureMode.APERTURE_PRIORITY) ExposureCalculator.SHUTTER_SECONDS[_selectedShutterIndex.value]
-      else if (stock == null) raw else stock.calculateCorrectedExposure(raw)
+    val selected = availableShutterSeconds[_selectedShutterIndex.value]
+    val actual = if (_exposureMode.value == ExposureMode.APERTURE_PRIORITY) {
+      val target = getFilteredMeteredSeconds() ?: return null
+      val desired = (if (stock == null) target else stock.calculateCorrectedExposure(target)) ?: return null
+      if (_currentCameraSetup.value?.allowsBulb != false && desired >= 1.0) desired else selected
+    } else selected
+    if (_exposureMode.value != ExposureMode.MANUAL_MATCH &&
+      getEvDelta()?.let { abs(it) > 0.6 } == true) return null
+    return actual
+  }
+
+  private fun closestActualShutter(idealMetered: Double): Int? {
+    val stock = _selectedFilmStock.value
+    var best: Int? = null
+    var smallestError = Double.POSITIVE_INFINITY
+    for ((index, actual) in availableShutterSeconds.withIndex()) {
+      val metered = (if (stock == null) actual else stock.calculateMeteredExposure(actual)) ?: continue
+      val error = abs(log2(metered) - log2(idealMetered))
+      if (error < smallestError) { best = index; smallestError = error }
+    }
+    return best
   }
 
   fun getEvDelta(): Double? {
     val seconds = getRawShutterSeconds() ?: return null
     val ev = computeEvForActiveIso()
-    return if (ev.isFinite()) ExposureCalculator.calculateEvDelta(_selectedApertureIndex.value, seconds, ev) else null
+    return if (ev.isFinite()) ExposureCalculator.calculateEvDelta(_selectedApertureIndex.value, seconds, ev, availableApertures) else null
   }
 
-  fun getExposureGuidance(): String? = _selectedFilmStock.value?.reciprocityGuidance(
-    getRawShutterSeconds() ?: ExposureCalculator.SHUTTER_SECONDS[_selectedShutterIndex.value])
+  fun getExposureGuidance(): String? {
+    val raw = getRawShutterSeconds()
+    val film = _selectedFilmStock.value?.reciprocityGuidance(raw ?: availableShutterSeconds[_selectedShutterIndex.value])
+    val camera = _currentCameraSetup.value
+    val limit = when {
+      raw != null && (getEvDelta()?.let { abs(it) > 0.6 } == true) && _exposureMode.value != ExposureMode.MANUAL_MATCH ->
+        if (camera == null) "Outside the selectable exposure range. Change aperture, shutter or filter."
+        else "Outside ${camera.name}'s exposure range. Change aperture or shutter, or use a filter."
+      camera != null && raw != null && getCorrectedShutterSeconds() == null &&
+        (_selectedFilmStock.value == null || _selectedFilmStock.value?.calculateCorrectedExposure(raw) != null) ->
+        "This duration is not on ${camera.name}'s shutter dial. Enable Bulb in the camera setup or choose another aperture."
+      _exposureMode.value == ExposureMode.APERTURE_PRIORITY && raw == null ->
+        if (getFilteredMeteredSeconds() == null) "Exposure is outside the supported one-day range."
+        else "No shutter setting supports this film profile. Choose another aperture or camera setting."
+      else -> null
+    }
+    return listOfNotNull(limit, film).takeIf { it.isNotEmpty() }?.joinToString("\n")
+  }
+
+  fun setExposureCompensation(stops: Double) {
+    if (_isSaving.value || !stops.isFinite() || stops !in -3.0..3.0) return
+    _exposureCompensation.value = (stops * 3).roundToInt() / 3.0
+    recalculateForMode()
+    persistSetup()
+  }
+
+  fun setFilterStops(stops: Double) {
+    if (_isSaving.value || !stops.isFinite() || stops !in 0.0..16.0) return
+    _filterStops.value = stops
+    recalculateForMode()
+    persistSetup()
+  }
+
+  fun resetExposureAdjustments() {
+    if (_isSaving.value) return
+    _exposureCompensation.value = 0.0
+    _filterStops.value = 0.0
+    recalculateForMode()
+    persistSetup()
+  }
 
   fun isLongExposure(): Boolean {
     return (getCorrectedShutterSeconds() ?: 0.0) >= 1.0
@@ -355,13 +562,14 @@ class LightMeterViewModel @JvmOverloads constructor(
     if (sensorManager.isLocked.value || _isSaving.value || format == _selectedFormat.value) return
     _selectedFormat.value = format
     _focalLengthMm.value = DepthOfFieldCalculator.getDefaultFocalLength(format)
+    if (_activeRollFrameCount.value == 0) _currentRoll.value = _currentRoll.value?.copy(frameCapacity = format.standardFramesPerRoll)
     if (_measurementSource.value == MeasurementSource.CAMERA) invalidateReading()
     persistSetup()
   }
 
   fun setApertureIndex(index: Int) {
     if (_isSaving.value) return
-    _selectedApertureIndex.value = index.coerceIn(0, ExposureCalculator.APERTURE_VALUES.lastIndex)
+    _selectedApertureIndex.value = index.coerceIn(0, availableApertures.lastIndex)
     if (_exposureMode.value == ExposureMode.APERTURE_PRIORITY) {
       recalculateForMode()
     }
@@ -370,7 +578,7 @@ class LightMeterViewModel @JvmOverloads constructor(
 
   fun setShutterIndex(index: Int) {
     if (_isSaving.value) return
-    _selectedShutterIndex.value = index.coerceIn(0, ExposureCalculator.SHUTTER_SECONDS.lastIndex)
+    _selectedShutterIndex.value = index.coerceIn(0, availableShutterSeconds.lastIndex)
     if (_exposureMode.value == ExposureMode.SHUTTER_PRIORITY) {
       recalculateForMode()
     }
@@ -395,13 +603,13 @@ class LightMeterViewModel @JvmOverloads constructor(
   fun setExposureMode(mode: ExposureMode) {
     if (_isSaving.value || mode == _exposureMode.value) return
     val wasAperture = _exposureMode.value == ExposureMode.APERTURE_PRIORITY
-    if (wasAperture != (mode == ExposureMode.APERTURE_PRIORITY)) {
-      val seconds = if (wasAperture) getCorrectedShutterSeconds() else getRawShutterSeconds()
+    if (wasAperture && mode != ExposureMode.APERTURE_PRIORITY) {
+      val seconds = getCorrectedShutterSeconds()
       if (seconds != null) {
-        _selectedShutterIndex.value = ExposureCalculator.SHUTTER_SECONDS.indices.minBy {
-          abs(log2(ExposureCalculator.SHUTTER_SECONDS[it]) - log2(seconds))
+        _selectedShutterIndex.value = availableShutterSeconds.indices.minBy {
+          abs(log2(availableShutterSeconds[it]) - log2(seconds))
         }
-        if (wasAperture && seconds > ExposureCalculator.SHUTTER_SECONDS.last()) {
+        if (wasAperture && seconds > availableShutterSeconds.last()) {
           _userMessage.value = "This exposure exceeds the selectable shutter range. Use aperture priority and the timer."
         }
       }
@@ -416,17 +624,22 @@ class LightMeterViewModel @JvmOverloads constructor(
     val evForIso = computeEvForActiveIso()
     when (_exposureMode.value) {
       ExposureMode.APERTURE_PRIORITY -> {
-        val newShutterIdx = ExposureCalculator.calculateShutterIndexForAperture(
-          _selectedApertureIndex.value,
-          evForIso
-        )
-        _selectedShutterIndex.value = newShutterIdx
+        val target = getFilteredMeteredSeconds()
+        val stock = _selectedFilmStock.value
+        val desired = target?.let { if (stock == null) it else stock.calculateCorrectedExposure(it) }
+        _selectedShutterIndex.value = when {
+          target == null -> ExposureCalculator.calculateShutterIndexForAperture(
+            _selectedApertureIndex.value, evForIso, availableApertures, availableShutterSeconds)
+          desired == null -> nearest(availableShutterSeconds, target)
+          _currentCameraSetup.value?.allowsBulb != false && desired >= 1.0 -> nearest(availableShutterSeconds, desired)
+          else -> closestActualShutter(target) ?: nearest(availableShutterSeconds, desired)
+        }
       }
       ExposureMode.SHUTTER_PRIORITY -> {
         val seconds = getRawShutterSeconds() ?: return
         val newApertureIdx = ExposureCalculator.calculateApertureIndexForShutterSeconds(
           seconds,
-          evForIso
+          evForIso, availableApertures
         )
         _selectedApertureIndex.value = newApertureIdx
       }
@@ -446,7 +659,8 @@ class LightMeterViewModel @JvmOverloads constructor(
 
   fun setApertureDirectly(apertureLabel: String) {
     if (_isSaving.value) return
-    val idx = ExposureCalculator.APERTURE_LABELS.indexOf(apertureLabel)
+    val value = apertureLabel.removePrefix("f/").toDoubleOrNull() ?: return
+    val idx = availableApertures.indexOfFirst { abs(it - value) < 1e-9 }
     if (idx != -1) {
       _selectedApertureIndex.value = idx
       persistSetup()
@@ -455,10 +669,8 @@ class LightMeterViewModel @JvmOverloads constructor(
 
   fun setShutterDirectly(shutterLabel: String) {
     if (_isSaving.value) return
-    val clean = shutterLabel.trim().removeSuffix("s")
-    val idx = ExposureCalculator.SHUTTER_LABELS.indexOfFirst {
-      it.equals(shutterLabel, ignoreCase = true) || it.equals(clean, ignoreCase = true) || it.equals("${clean}s", ignoreCase = true)
-    }
+    val value = ExposureCalculator.parseShutterSpeeds(shutterLabel)?.singleOrNull() ?: return
+    val idx = availableShutterSeconds.indexOfFirst { abs(it - value) < 1e-9 }
     if (idx != -1) {
       _selectedShutterIndex.value = idx
       persistSetup()
@@ -467,16 +679,17 @@ class LightMeterViewModel @JvmOverloads constructor(
 
   fun applySunny16Preset(apertureLabel: String, shutterLabel: String, iso: Int) {
     if (_isSaving.value || iso !in 1..102400) return
+    val referenceAperture = apertureLabel.removePrefix("f/").toDoubleOrNull()
+      ?.takeIf { it.isFinite() && it in 1.0..64.0 } ?: return
+    val referenceSeconds = ExposureCalculator.parseShutterSpeeds(shutterLabel)?.singleOrNull() ?: return
     setMeasurementSource(MeasurementSource.SUNNY_16)
     sensorManager.setLocked(false)
     setIso(iso)
-    setApertureDirectly(apertureLabel)
-    setShutterDirectly(shutterLabel)
-    val aperture = ExposureCalculator.APERTURE_VALUES[_selectedApertureIndex.value]
-    val seconds = ExposureCalculator.SHUTTER_SECONDS[_selectedShutterIndex.value]
-    setPresetEv100(log2(aperture * aperture / seconds) - log2(iso / 100.0))
+    _selectedApertureIndex.value = nearest(availableApertures, referenceAperture)
+    _selectedShutterIndex.value = nearest(availableShutterSeconds, referenceSeconds)
+    // The weather estimate is independent of which values the camera can dial.
+    setPresetEv100(log2(referenceAperture * referenceAperture / referenceSeconds) - log2(iso / 100.0))
     persistSetup()
-    _userMessage.value = "Sunny 16 applied: $apertureLabel at $shutterLabel (ISO $iso)"
   }
 
   fun setIso(iso: Int) {
@@ -518,38 +731,71 @@ class LightMeterViewModel @JvmOverloads constructor(
   fun logExposure(notes: String = "") {
     if (!_setupReady.value || _isSaving.value || _savedEntry.value != null ||
       _readingStatus.value != ReadingStatus.HELD || rawEv100.value == null) return
-    val nextFrame = _activeRollFrameCount.value + 1
-    val format = _selectedFormat.value
-    val apertureStr = ExposureCalculator.APERTURE_LABELS[_selectedApertureIndex.value]
-    val shutterStr = ExposureCalculator.SHUTTER_LABELS[_selectedShutterIndex.value]
-    val stock = _selectedFilmStock.value
-    val stockName = stock?.name ?: "Custom (ISO $activeIso)"
     val rawSec = getRawShutterSeconds() ?: return
     val corrSec = getCorrectedShutterSeconds() ?: return
-    val evVal = computeEvForActiveIso()
+    saveFrame(availableApertures[_selectedApertureIndex.value], rawSec, corrSec, notes, manual = false)
+  }
 
+  fun recordManualExposure(aperture: Double, actualSeconds: Double, notes: String = "") {
+    if (!_setupReady.value || _isSaving.value || _savedEntry.value != null ||
+      !aperture.isFinite() || aperture !in 1.0..64.0 || !actualSeconds.isFinite() ||
+      actualSeconds <= 0.0 || actualSeconds > ExposureCalculator.MAX_EXPOSURE_SECONDS) return
+    val measured = computeEv100().takeIf { it.isFinite() && _readingStatus.value == ReadingStatus.HELD }?.let {
+      (aperture * aperture / 2.0.pow(ExposureCalculator.ev100ToEvForIso(it, activeIso) -
+        _exposureCompensation.value - _filterStops.value)).takeIf { seconds ->
+          seconds.isFinite() && seconds > 0.0 && seconds <= ExposureCalculator.MAX_EXPOSURE_SECONDS }
+    } ?: 0.0
+    saveFrame(aperture, measured, actualSeconds, notes, manual = true)
+  }
+
+  fun beginNextManualFrame(): Boolean {
+    if (_isSaving.value || _savedEntry.value?.isManual != true || !canSaveToCurrentRoll()) return false
+    _savedEntry.value = null
+    if (sensorManager.isLocked.value) toggleHold()
+    return true
+  }
+
+  private fun saveFrame(aperture: Double, rawSec: Double, corrSec: Double, notes: String, manual: Boolean) {
+    val roll = _currentRoll.value ?: return
+    getCurrentRollGuidance()?.let { _userMessage.value = it; return }
+    if (notes.length > 5000) { _userMessage.value = "Keep frame notes within 5,000 characters."; return }
+    if (roll.isFinished) { _userMessage.value = "Continue this roll or start a new one before saving."; return }
+    val nextFrame = _activeRollFrameCount.value + 1
+    if (nextFrame > roll.frameCapacity) { _userMessage.value = "This roll is full. Start a new roll or update its frame capacity."; return }
+    val stock = _selectedFilmStock.value
+    val ev100 = if (manual && _readingStatus.value != ReadingStatus.HELD) Double.NaN else computeEv100()
     val entry = FilmLogEntry(
       rollId = _currentRollId.value,
       rollName = _currentRollName.value,
       frameNumber = nextFrame,
-      filmStockName = stockName,
+      filmStockName = stock?.name ?: roll.filmStockName.ifBlank { "Custom (ISO $activeIso)" },
       iso = activeIso,
-      format = format.displayName,
-      apertureText = apertureStr,
-      shutterText = shutterStr,
+      format = _selectedFormat.value.displayName,
+      apertureText = ExposureCalculator.formatAperture(aperture),
+      shutterText = if (manual || _exposureMode.value == ExposureMode.APERTURE_PRIORITY) ExposureCalculator.formatSeconds(corrSec)
+        else shutterLabels[_selectedShutterIndex.value],
       rawSeconds = rawSec,
       correctedSeconds = corrSec,
-      evValue = evVal,
+      evValue = if (ev100.isFinite()) ExposureCalculator.ev100ToEvForIso(ev100, activeIso) else 0.0,
       luxValue = sensorManager.lux.value,
-      notes = notes
+      notes = notes,
+      cameraName = _currentCameraSetup.value?.name.orEmpty(), focalLengthMm = _focalLengthMm.value,
+      meteringSource = _measurementSource.value.name, exposureCompensation = _exposureCompensation.value,
+      filterStops = _filterStops.value, calibrationEv = if (_measurementSource.value == MeasurementSource.SUNNY_16) 0f else _calibrationOffsetEv.value,
+      correctionKind = if (manual) "Manual" else stock?.correctionLabel ?: "No film profile",
+      isManual = manual, hasMeterReading = ev100.isFinite()
     )
 
     _isSaving.value = true
     viewModelScope.launch {
       try {
-        val id = repository.insertLogEntry(entry).toInt()
-        _activeRollFrameCount.value = nextFrame
-        _savedEntry.value = entry.copy(id = id)
+        rollWrites.withLock {
+          val updated = rollFromSetup(_currentRoll.value).copy(lastFrameNumber = nextFrame)
+          val id = repository.insertFrame(entry, updated).toInt()
+          _activeRollFrameCount.value = nextFrame
+          _currentRoll.value = updated
+          _savedEntry.value = entry.copy(id = id)
+        }
         persistSetup()
       } catch (error: Exception) {
         if (error is CancellationException) throw error
@@ -566,9 +812,14 @@ class LightMeterViewModel @JvmOverloads constructor(
     _isSaving.value = true
     viewModelScope.launch {
       try {
-        repository.deleteLogEntry(entry.id)
-        if (entry.frameNumber == _activeRollFrameCount.value) _activeRollFrameCount.value -= 1
-        _savedEntry.value = null
+        rollWrites.withLock {
+          val count = if (entry.frameNumber == _activeRollFrameCount.value) _activeRollFrameCount.value - 1 else _activeRollFrameCount.value
+          val updated = rollFromSetup(_currentRoll.value).copy(lastFrameNumber = count)
+          repository.deleteFrameAndUpdateRoll(entry.id, updated)
+          _activeRollFrameCount.value = count
+          _currentRoll.value = updated
+          _savedEntry.value = null
+        }
         persistSetup()
         _userMessage.value = "Frame ${entry.frameNumber} removed."
       } catch (error: Exception) {
@@ -580,15 +831,186 @@ class LightMeterViewModel @JvmOverloads constructor(
     }
   }
 
-  fun startNewRoll(rollName: String) {
-    if (!_setupReady.value || _isSaving.value) return
+  fun startNewRoll(rollName: String, frameCapacity: Int = _selectedFormat.value.standardFramesPerRoll) {
+    if (!_setupReady.value || _isSaving.value || frameCapacity !in 1..1000 || rollName.trim().length !in 1..100) return
     _currentRollId.value = UUID.randomUUID().toString()
     _currentRollName.value = rollName.trim().ifEmpty { "New roll" }
     _activeRollFrameCount.value = 0
     _savedEntry.value = null
+    _currentRoll.value = rollFromSetup().copy(frameCapacity = frameCapacity)
+    _exposureCompensation.value = 0.0
+    _filterStops.value = 0.0
+    recalculateForMode()
     persistSetup()
     _userMessage.value = "Started new roll: $rollName"
   }
+
+  fun continueRoll(id: String) {
+    if (!_setupReady.value || _isSaving.value) return
+    _isSaving.value = true
+    viewModelScope.launch {
+      try {
+        rollWrites.withLock {
+          val roll = repository.getRoll(id) ?: return@withLock
+          val camera = roll.cameraSetupId?.let { repository.getCameraSetup(it) }
+          val stock = roll.filmStockId?.let { repository.getFilmStock(it) }
+          val latestFrame = repository.getLatestEntryForRoll(id)?.frameNumber ?: 0
+          val continued = roll.copy(isFinished = false, lastFrameNumber = maxOf(roll.lastFrameNumber, latestFrame))
+          repository.saveRoll(continued)
+          applyCameraSetup(camera)
+          _selectedFilmStock.value = stock
+          _customIso.value = roll.iso
+          _selectedFormat.value = CameraFormat.entries.firstOrNull { it.name == roll.format } ?: CameraFormat.FORMAT_35MM
+          _focalLengthMm.value = roll.focalLengthMm.coerceIn(10, 1000)
+          _currentRollId.value = roll.id
+          _currentRollName.value = roll.name
+          _activeRollFrameCount.value = continued.lastFrameNumber
+          _currentRoll.value = continued
+          _savedEntry.value = null
+          _exposureCompensation.value = 0.0
+          _filterStops.value = 0.0
+          sensorManager.setLocked(false)
+          invalidateReading()
+          if (meteringActive && _measurementSource.value == MeasurementSource.SENSOR) startSensor()
+          persistSetup()
+        }
+      } catch (error: Exception) {
+        if (error is CancellationException) throw error
+        _userMessage.value = "Could not continue this roll. Try again."
+      } finally { _isSaving.value = false }
+    }
+  }
+
+  fun finishCurrentRoll() {
+    val roll = _currentRoll.value ?: return
+    if (_isSaving.value) return
+    _isSaving.value = true
+    viewModelScope.launch {
+      try {
+        rollWrites.withLock {
+          val finished = rollFromSetup(_currentRoll.value).copy(isFinished = true)
+          repository.saveRoll(finished)
+          _currentRoll.value = finished
+          _savedEntry.value = null
+          persistSetup()
+        }
+        _userMessage.value = "Finished ${roll.name}. Your frames are kept."
+      } catch (error: Exception) {
+        if (error is CancellationException) throw error
+        _userMessage.value = "Could not finish the roll. Try again."
+      } finally { _isSaving.value = false }
+    }
+  }
+
+  fun setCurrentFrame(lastFrameNumber: Int) = updateRollProgress(lastFrameNumber = lastFrameNumber)
+  fun setCurrentRollFrameCapacity(capacity: Int) = updateRollProgress(capacity = capacity)
+
+  private fun updateRollProgress(lastFrameNumber: Int? = null, capacity: Int? = null) {
+    val roll = _currentRoll.value ?: return
+    if (_isSaving.value || roll.isFinished || (capacity != null && capacity !in 1..1000) ||
+      (lastFrameNumber != null && lastFrameNumber !in 0..(capacity ?: roll.frameCapacity))) return
+    _isSaving.value = true
+    viewModelScope.launch {
+      try {
+        rollWrites.withLock {
+          val highest = repository.getLatestEntryForRoll(roll.id)?.frameNumber ?: 0
+          val count = lastFrameNumber ?: _activeRollFrameCount.value
+          if (count < highest || (capacity ?: roll.frameCapacity) < count) {
+            _userMessage.value = "The frame count and capacity must include your saved frames."
+            return@withLock
+          }
+          val updated = rollFromSetup(_currentRoll.value).copy(lastFrameNumber = count, frameCapacity = capacity ?: roll.frameCapacity)
+          repository.saveRoll(updated)
+          _activeRollFrameCount.value = count
+          _currentRoll.value = updated
+          persistSetup()
+        }
+      } catch (error: Exception) {
+        if (error is CancellationException) throw error
+        _userMessage.value = "Could not update the roll. Try again."
+      } finally { _isSaving.value = false }
+    }
+  }
+
+  fun updateLogNotes(id: Int, notes: String) {
+    if (_isSaving.value || notes.length > 5000) return
+    _isSaving.value = true
+    viewModelScope.launch {
+      try {
+        repository.updateLogNotes(id, notes)
+        if (_savedEntry.value?.id == id) _savedEntry.value = _savedEntry.value?.copy(notes = notes)
+        _userMessage.value = "Frame note saved."
+      } catch (error: Exception) {
+        if (error is CancellationException) throw error
+        _userMessage.value = "Could not save the note. Try again."
+      } finally { _isSaving.value = false }
+    }
+  }
+
+  private fun validCameraSetup(camera: CameraSetup): Boolean = camera.name.trim().length in 1..100 &&
+    CameraFormat.entries.any { it.name == camera.format } && camera.focalLengthMm in 10..1000 &&
+    camera.minAperture.isFinite() && camera.maxAperture.isFinite() && camera.minAperture in 1.0..64.0 &&
+    camera.maxAperture in camera.minAperture..64.0 && ExposureCalculator.parseShutterSpeeds(camera.shutterSpeeds) != null
+
+  private fun applyCameraSetup(camera: CameraSetup?) {
+    val aperture = availableApertures[_selectedApertureIndex.value]
+    val shutter = availableShutterSeconds[_selectedShutterIndex.value]
+    _currentCameraSetup.value = camera?.takeIf(::validCameraSetup)
+    _selectedApertureIndex.value = nearest(availableApertures, aperture)
+    _selectedShutterIndex.value = nearest(availableShutterSeconds, shutter)
+    _currentCameraSetup.value?.let {
+      if (_activeRollFrameCount.value == 0 && _selectedFormat.value.name != it.format)
+        _currentRoll.value = _currentRoll.value?.copy(frameCapacity = CameraFormat.valueOf(it.format).standardFramesPerRoll)
+      _selectedFormat.value = CameraFormat.valueOf(it.format)
+      _focalLengthMm.value = it.focalLengthMm
+    }
+    if (_measurementSource.value == MeasurementSource.CAMERA) {
+      sensorManager.setLocked(false)
+      invalidateReading()
+    } else recalculateForMode()
+  }
+
+  fun selectCameraSetup(id: Int?) {
+    if (!_setupReady.value || _isSaving.value || _isSavingCameraSetup.value) return
+    _isSaving.value = true
+    viewModelScope.launch {
+      try {
+        val camera = id?.let { repository.getCameraSetup(it) }
+        if (id != null && camera == null) { _userMessage.value = "Camera setup no longer exists."; return@launch }
+        applyCameraSetup(camera)
+        _exposureCompensation.value = 0.0
+        _filterStops.value = 0.0
+        recalculateForMode()
+        persistSetup()
+      } catch (error: Exception) {
+        if (error is CancellationException) throw error
+        _userMessage.value = "Could not load this camera setup. Try again."
+      } finally { _isSaving.value = false }
+    }
+  }
+
+  fun saveCameraSetup(camera: CameraSetup) {
+    if (!_setupReady.value || _isSaving.value || _isSavingCameraSetup.value || !validCameraSetup(camera)) return
+    _isSavingCameraSetup.value = true
+    _isSaving.value = true
+    _cameraSetupSavedId.value = null
+    viewModelScope.launch {
+      try {
+        val id = repository.saveCameraSetup(camera.copy(name = camera.name.trim())).toInt()
+        applyCameraSetup(camera.copy(id = id, name = camera.name.trim()))
+        _exposureCompensation.value = 0.0
+        _filterStops.value = 0.0
+        recalculateForMode()
+        persistSetup()
+        _cameraSetupSavedId.value = id
+      } catch (error: Exception) {
+        if (error is CancellationException) throw error
+        _userMessage.value = "Camera was not saved. Try again."
+      } finally { _isSavingCameraSetup.value = false; _isSaving.value = false }
+    }
+  }
+
+  fun clearCameraSetupSavedReceipt() { _cameraSetupSavedId.value = null }
 
   fun deleteLogEntry(id: Int) {
     if (_isSaving.value) return
@@ -611,9 +1033,11 @@ class LightMeterViewModel @JvmOverloads constructor(
     _isSaving.value = true
     viewModelScope.launch {
       try {
-        repository.deleteRoll(rollId)
-        _isSaving.value = false
-        if (_currentRollId.value == rollId) startNewRoll("New Roll")
+        rollWrites.withLock {
+          repository.deleteRoll(rollId)
+          _isSaving.value = false
+          if (_currentRollId.value == rollId) startNewRoll("New Roll")
+        }
       } catch (error: Exception) {
         if (error is CancellationException) throw error
         _userMessage.value = "Could not delete the roll. Try again."
@@ -658,10 +1082,34 @@ class LightMeterViewModel @JvmOverloads constructor(
     }
   }
 
-  fun setCalibrationOffset(offset: Float) {
-    if (_isSaving.value || !offset.isFinite()) return
-    _calibrationOffsetEv.value = offset.coerceIn(-3f, 3f)
-    deviceCalibration.edit().putFloat("calibration", _calibrationOffsetEv.value).apply()
+  fun calibrationOffsetFor(source: MeasurementSource): Float {
+    if (source == MeasurementSource.SUNNY_16) return 0f
+    val fallback = if (source == MeasurementSource.CAMERA) deviceCalibration.getFloat("calibration", 0f) else 0f
+    return deviceCalibration.getFloat(if (source == MeasurementSource.CAMERA) "camera" else "sensor", fallback)
+      .takeIf { it.isFinite() }?.coerceIn(-3f, 3f) ?: 0f
+  }
+
+  fun proposeCalibrationOffset(referenceAperture: Double, referenceSeconds: Double, referenceIso: Int): Float? {
+    val raw = rawEv100.value ?: return null
+    if (_measurementSource.value == MeasurementSource.SUNNY_16 ||
+      _readingStatus.value != ReadingStatus.HELD || !referenceAperture.isFinite() || referenceAperture !in 1.0..64.0 ||
+      !referenceSeconds.isFinite() || referenceSeconds <= 0.0 || referenceSeconds > ExposureCalculator.MAX_EXPOSURE_SECONDS ||
+      referenceIso !in 1..102400) return null
+    val referenceEv = log2(referenceAperture * referenceAperture / referenceSeconds) - log2(referenceIso / 100.0)
+    return (referenceEv - raw).toFloat().takeIf { it.isFinite() && it in -3f..3f }
+  }
+
+  fun setCalibrationOffset(offset: Float, source: MeasurementSource = _measurementSource.value.let {
+    if (it == MeasurementSource.SUNNY_16) MeasurementSource.CAMERA else it
+  }) {
+    if (_isSaving.value || !offset.isFinite() || source == MeasurementSource.SUNNY_16) return
+    val value = offset.coerceIn(-3f, 3f)
+    deviceCalibration.edit().apply {
+      putFloat(if (source == MeasurementSource.CAMERA) "camera" else "sensor", value)
+      if (source == MeasurementSource.CAMERA) putFloat("calibration", value)
+    }.apply()
+    _calibrationOffsets.value = _calibrationOffsets.value + (source to value)
+    _calibrationOffsetEv.value = calibrationOffsetFor(_measurementSource.value)
     recalculateForMode()
     persistSetup()
   }

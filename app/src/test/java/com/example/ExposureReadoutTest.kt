@@ -51,6 +51,18 @@ class ExposureReadoutTest {
   }
 
   @Test
+  fun unknownFilmCanShowMeteredExposureWithoutCallingItARecommendation() {
+    compose.setContent {
+      MyApplicationTheme {
+        ExposureReadout(ExposureMode.APERTURE_PRIORITY, "f/8", "1/125s", true, 11.0, 0.0, true, {}, {}, resultLabel = "Metered shutter")
+      }
+    }
+    compose.onNodeWithText("Metered shutter").assertIsDisplayed()
+    compose.onNodeWithText("1/125s").assertIsDisplayed()
+    compose.onNodeWithText("Recommended shutter").assertDoesNotExist()
+  }
+
+  @Test
   fun largeTextKeepsTheEditableApertureReachable() {
     var apertureOpened = false
     compose.setContent {

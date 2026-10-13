@@ -2,6 +2,7 @@ package com.example
 
 import android.graphics.Matrix
 import android.graphics.Rect
+import android.graphics.RectF
 import com.example.sensor.CameraMetering
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -53,6 +54,73 @@ class CameraMeteringTest {
       Rect(1250, 750, 2750, 2250),
       CameraMetering.frameRegion(300, 300, preview, sensor, Rect(1000, 750, 3000, 2250))
     )
+  }
+
+  @Test
+  fun `off-centre selection follows the visible portrait frame through rotation and zoom`() {
+    val sensor = Rect(0, 0, 4000, 3000)
+    val preview = Matrix().apply {
+      setValues(floatArrayOf(0f, -0.1f, 300f, 0.1f, 0f, -50f, 0f, 0f, 1f))
+    }
+    val area = RectF(0.2f, 0.65f, 0.32f, 0.77f)
+    assertEquals(Rect(2450, 2040, 2810, 2400), CameraMetering.frameRegion(300, 300, preview, sensor, sensor, area))
+    assertEquals(
+      Rect(2225, 1770, 2405, 1950),
+      CameraMetering.frameRegion(300, 300, preview, sensor, Rect(1000, 750, 3000, 2250), area)
+    )
+    assertEquals(RectF(0.2f, 0.65f, 0.32f, 0.77f), area)
+  }
+
+  @Test
+  fun `edge taps keep the entire outlined area inside the visible frame`() {
+    val sensor = Rect(0, 0, 4000, 3000)
+    val preview = Matrix().apply {
+      setValues(floatArrayOf(0.1f, 0f, -50f, 0f, 0.1f, 0f, 0f, 0f, 1f))
+    }
+    val area = CameraMetering.selectedAreaAt(1f, 0f)!!
+    assertEquals(0.88f, area.left, 0.000001f)
+    assertEquals(0f, area.top, 0f)
+    assertEquals(1f, area.right, 0f)
+    assertEquals(0.12f, area.bottom, 0.000001f)
+    assertEquals(
+      Rect(2570, 750, 2750, 930),
+      CameraMetering.frameRegion(300, 300, preview, sensor, Rect(1000, 750, 3000, 2250), area)
+    )
+    val lowerLeft = CameraMetering.selectedAreaAt(0f, 1f)!!
+    assertEquals(0f, lowerLeft.left, 0f)
+    assertEquals(1f, lowerLeft.bottom, 0f)
+    assertEquals(0.12f, lowerLeft.width(), 0.000001f)
+    assertEquals(0.12f, lowerLeft.height(), 0.000001f)
+  }
+
+  @Test
+  fun `reset uses the complete new frame and never accepts the previous selected region`() {
+    val sensor = Rect(0, 0, 4000, 3000)
+    val preview = Matrix().apply { setScale(0.1f, 0.1f) }
+    val selected = CameraMetering.frameRegion(400, 300, preview, sensor, sensor,
+      CameraMetering.selectedAreaAt(0.5f, 0.5f))!!
+    val newPreview = Matrix().apply {
+      setValues(floatArrayOf(0.15f, 0f, 0f, 0f, 0.15f, -25f, 0f, 0f, 1f))
+    }
+    val reset = CameraMetering.frameRegion(600, 400, newPreview, sensor, sensor, null)!!
+    assertEquals(Rect(0, 167, 4000, 2833), reset)
+    assertTrue(CameraMetering.needsRegionUpdate(selected, reset))
+    assertFalse(CameraMetering.regionsMatch(reset, selected))
+  }
+
+  @Test
+  fun `invalid selections never expand silently to a plausible metering frame`() {
+    val sensor = Rect(0, 0, 4000, 3000)
+    for (area in listOf(
+      RectF(-0.1f, 0f, 0.2f, 0.2f), RectF(0f, 0f, 1.1f, 1f),
+      RectF(0f, 0f, 1f, 1.1f), RectF(0.6f, 0f, 0.4f, 1f),
+      RectF(0f, 0f, 0f, 1f), RectF(0f, Float.NaN, 1f, 1f)
+    )) {
+      assertNull(CameraMetering.frameRegion(400, 300, Matrix(), sensor, sensor, area))
+    }
+    assertNull(CameraMetering.selectedAreaAt(-0.1f, 0.5f))
+    assertNull(CameraMetering.selectedAreaAt(0.5f, 1.1f))
+    assertNull(CameraMetering.selectedAreaAt(Float.NaN, 0.5f))
   }
 
   @Test

@@ -388,6 +388,9 @@ class LightMeterViewModelTest {
       return id.toLong()
     }
     override suspend fun deleteEntryById(id: Int) { entries.value = entries.value.filterNot { it.id == id } }
+    override suspend fun updateLogNotes(id: Int, notes: String) {
+      entries.value = entries.value.map { if (it.id == id) it.copy(notes = notes) else it }
+    }
     override suspend fun deleteRollEntries(rollId: String) { entries.value = entries.value.filterNot { it.rollId == rollId } }
   }
 

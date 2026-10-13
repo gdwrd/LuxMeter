@@ -1,6 +1,7 @@
 package com.example.ui.settings
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,22 +13,32 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -37,46 +48,95 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.data.RollExport
+import com.example.data.model.CameraFormat
 import com.example.data.model.FilmLogEntry
+import com.example.data.model.FilmRoll
 import com.example.data.model.FilmStock
 import com.example.sensor.ExposureCalculator
+import com.example.ui.components.CalibrationDialog
+import com.example.ui.components.CameraSetupDialog
+import com.example.ui.components.FilmDetailsDialog
 import com.example.ui.meter.LightMeterViewModel
+import com.example.ui.meter.MeasurementSource
 import java.text.DateFormat
 import java.text.NumberFormat
 import java.text.ParsePosition
 import java.util.Date
 import java.util.Locale
 import kotlin.math.pow
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
 
 @Composable
 fun RollsScreen(viewModel: LightMeterViewModel, modifier: Modifier = Modifier) {
   val logs by viewModel.allLogs.collectAsStateWithLifecycle()
+  val rolls by viewModel.allRolls.collectAsStateWithLifecycle()
+  val currentRoll by viewModel.currentRoll.collectAsStateWithLifecycle()
   val ready by viewModel.setupReady.collectAsStateWithLifecycle()
   val saving by viewModel.isSaving.collectAsStateWithLifecycle()
-  val currentId by viewModel.currentRollId.collectAsStateWithLifecycle()
-  val currentName by viewModel.currentRollName.collectAsStateWithLifecycle()
-  val frameCount by viewModel.activeRollFrameCount.collectAsStateWithLifecycle()
   val format by viewModel.selectedFormat.collectAsStateWithLifecycle()
   val stock by viewModel.selectedFilmStock.collectAsStateWithLifecycle()
+  val customIso by viewModel.customIso.collectAsStateWithLifecycle()
+  val camera by viewModel.currentCameraSetup.collectAsStateWithLifecycle()
+  val context = LocalContext.current
+  val scope = rememberCoroutineScope()
+  var sharing by remember { mutableStateOf(false) }
   var openRollId by rememberSaveable { mutableStateOf<String?>(null) }
   var showNewRoll by rememberSaveable { mutableStateOf(false) }
   var newRollName by rememberSaveable { mutableStateOf("") }
+  var newCapacity by rememberSaveable { mutableStateOf("36") }
+  var requestedNewRoll by rememberSaveable { mutableStateOf(false) }
+  var previousRollId by rememberSaveable { mutableStateOf<String?>(null) }
+  var editingNumber by rememberSaveable { mutableStateOf<String?>(null) }
+  var numberDraft by rememberSaveable { mutableStateOf("") }
+  var submittedNumber by rememberSaveable { mutableStateOf<Int?>(null) }
+  var editingEntryId by rememberSaveable { mutableStateOf<Int?>(null) }
+  var notesDraft by rememberSaveable { mutableStateOf("") }
+  var submittedNotes by rememberSaveable { mutableStateOf<String?>(null) }
   var pendingDeleteId by rememberSaveable { mutableStateOf<Int?>(null) }
-  val rolls = remember(logs) { logs.groupBy { it.rollId } }
-  val openEntries = openRollId?.let { rolls[it] }.orEmpty().sortedBy { it.frameNumber }
-  val openRollName = if (openRollId == currentId) currentName
-    else openEntries.firstOrNull()?.rollName ?: "Roll"
+  var exportError by rememberSaveable { mutableStateOf<String?>(null) }
+  val loadedRoll = currentRoll?.takeUnless { it.isFinished }
+  val displayedRoll = rolls.firstOrNull { it.id == openRollId }
+    ?: currentRoll?.takeIf { it.id == openRollId }
+  val entries = logs.filter { it.rollId == openRollId }.sortedBy { it.frameNumber }
+  val activeEntry = logs.firstOrNull { it.id == editingEntryId }
 
   BackHandler(enabled = openRollId != null) { openRollId = null }
+  LaunchedEffect(rolls, currentRoll?.id, saving, requestedNewRoll) {
+    val stored = rolls.any { it.id == currentRoll?.id && it.id != previousRollId }
+    if (requestedNewRoll && !saving && stored) {
+      showNewRoll = false
+      requestedNewRoll = false
+      openRollId = currentRoll?.id
+    }
+  }
+  LaunchedEffect(currentRoll, submittedNumber, saving) {
+    val actual = if (editingNumber == "frame") currentRoll?.lastFrameNumber else currentRoll?.frameCapacity
+    if (!saving && submittedNumber != null && submittedNumber == actual) {
+      editingNumber = null
+      submittedNumber = null
+    }
+  }
+  LaunchedEffect(activeEntry?.notes, submittedNotes, saving) {
+    if (!saving && submittedNotes != null && activeEntry?.notes == submittedNotes) {
+      editingEntryId = null
+      submittedNotes = null
+    }
+  }
 
   Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
     LazyColumn(
@@ -84,48 +144,21 @@ fun RollsScreen(viewModel: LightMeterViewModel, modifier: Modifier = Modifier) {
       contentPadding = PaddingValues(horizontal = 24.dp, vertical = 20.dp),
       verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-      item {
-        if (openRollId != null) {
-          TextButton(onClick = { openRollId = null }) {
-            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
-            Text("All rolls", Modifier.padding(start = 8.dp))
-          }
-        }
-        if (openRollId != null) Text(openRollName, style = MaterialTheme.typography.headlineLarge)
-        Text(
-          if (openRollId == null) "Your photographs, one frame at a time."
-          else openEntries.size.toString() + " saved frames",
-          style = MaterialTheme.typography.bodyMedium,
-          color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-      }
-
       if (openRollId == null) {
-        item {
-          Card(onClick = { openRollId = currentId }, modifier = Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-              Text("Current roll", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-              Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                  Text(currentName, style = MaterialTheme.typography.titleLarge)
-                  Text(
-                    listOfNotNull(stock?.name, format.displayName).joinToString(" · "),
-                    style = MaterialTheme.typography.bodyMedium
-                  )
-                }
-                Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null)
-              }
-              Text(
-                "Frame " + frameCount + " of " + format.standardFramesPerRoll,
-                style = MaterialTheme.typography.bodyLarge
-              )
-            }
+        if (loadedRoll != null) {
+          item { RollCard(loadedRoll, "Current roll", onClick = { openRollId = loadedRoll.id }) }
+        } else {
+          item {
+            Text("No roll loaded", style = MaterialTheme.typography.titleLarge)
+            Text("Start a roll or continue one below.", color = MaterialTheme.colorScheme.onSurfaceVariant)
           }
         }
         item {
           Button(
             onClick = {
-              newRollName = "Roll #" + (rolls.keys.plus(currentId).distinct().size + 1)
+              newRollName = "Roll #" + (rolls.size + 1)
+              newCapacity = format.standardFramesPerRoll.toString()
+              requestedNewRoll = false
               showNewRoll = true
             },
             modifier = Modifier.fillMaxWidth(),
@@ -135,73 +168,200 @@ fun RollsScreen(viewModel: LightMeterViewModel, modifier: Modifier = Modifier) {
             Text("Start a new roll", Modifier.padding(start = 8.dp))
           }
         }
-        val pastRolls = rolls.filterKeys { it != currentId }.toList()
-        if (pastRolls.isNotEmpty()) {
-          item { Text("Previous rolls", style = MaterialTheme.typography.titleMedium) }
-          items(pastRolls, key = { it.first }) { (id, entries) ->
-            Card(onClick = { openRollId = id }, modifier = Modifier.fillMaxWidth()) {
-              Row(Modifier.padding(20.dp), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                  Text(entries.first().rollName, style = MaterialTheme.typography.titleMedium)
-                  Text(
-                    entries.size.toString() + " frames · " + entries.first().filmStockName,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                  )
-                }
-                Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null)
-              }
-            }
+        val otherLoaded = rolls.filter { !it.isFinished && it.id != loadedRoll?.id }
+        if (otherLoaded.isNotEmpty()) {
+          item { Text("Other loaded rolls", style = MaterialTheme.typography.titleMedium) }
+          items(otherLoaded, key = { it.id }) { roll ->
+            RollCard(roll, "Ready to continue", onClick = { openRollId = roll.id })
           }
-        } else {
+        }
+        val finished = rolls.filter { it.isFinished }
+        if (finished.isNotEmpty()) {
+          item { Text("Finished rolls", style = MaterialTheme.typography.titleMedium) }
+          items(finished, key = { it.id }) { roll ->
+            RollCard(roll, "Finished", onClick = { openRollId = roll.id })
+          }
+        }
+      } else {
+        item {
+          TextButton(onClick = { openRollId = null }) {
+            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
+            Text("All rolls", Modifier.padding(start = 8.dp))
+          }
+          Text(displayedRoll?.name ?: entries.firstOrNull()?.rollName ?: "Roll", style = MaterialTheme.typography.headlineLarge)
+          Text(entries.size.toString() + " saved frames", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        displayedRoll?.let { roll ->
           item {
             Text(
-              "Saved exposures stay on this device. Save a frame from the meter to begin your log.",
+              roll.filmStockName.ifBlank { "Unlisted film" } + " · ISO " + roll.iso + " · " + formatName(roll.format),
+              style = MaterialTheme.typography.bodyLarge
+            )
+            Text(
+              "Last frame exposed: " + roll.lastFrameNumber + " of " + roll.frameCapacity,
               style = MaterialTheme.typography.bodyMedium,
               color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            if (roll.id == loadedRoll?.id) {
+              Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(enabled = !saving, onClick = {
+                  editingNumber = "frame"
+                  numberDraft = roll.lastFrameNumber.toString()
+                  submittedNumber = null
+                }) { Text("Set frame") }
+                TextButton(enabled = !saving, onClick = {
+                  editingNumber = "capacity"
+                  numberDraft = roll.frameCapacity.toString()
+                  submittedNumber = null
+                }) { Text("Edit capacity") }
+              }
+              OutlinedButton(onClick = viewModel::finishCurrentRoll, enabled = !saving, modifier = Modifier.fillMaxWidth()) {
+                Text("Finish roll")
+              }
+            } else {
+              Button(onClick = { viewModel.continueRoll(roll.id) }, enabled = ready && !saving, modifier = Modifier.fillMaxWidth()) {
+                Text(if (roll.isFinished) "Reopen roll" else "Continue this roll")
+              }
+            }
           }
         }
-      } else if (openEntries.isEmpty()) {
-        item {
-          Text(
-            "No frames saved yet. Return to the meter and save your first exposure.",
-            style = MaterialTheme.typography.bodyLarge
-          )
-        }
-      } else {
-        items(openEntries, key = { it.id }) { entry ->
-          FilmLogRow(entry = entry, onDelete = { pendingDeleteId = entry.id })
+        if (entries.isNotEmpty()) {
+          item {
+            TextButton(enabled = !sharing, onClick = {
+              sharing = true
+              scope.launch {
+                try {
+                  RollExport.share(context, displayedRoll?.name ?: entries.first().rollName, entries)
+                } catch (error: Exception) {
+                  if (error is CancellationException) throw error
+                  exportError = "This roll could not be shared. Try again."
+                } finally { sharing = false }
+              }
+            }) {
+              Icon(Icons.Default.Share, contentDescription = null)
+              Text(if (sharing) "Preparing CSV…" else "Share roll as CSV", Modifier.padding(start = 8.dp))
+            }
+          }
+          items(entries, key = { it.id }) { entry ->
+            FilmLogRow(
+              entry = entry,
+              onOpen = {
+                editingEntryId = entry.id
+                notesDraft = entry.notes
+                submittedNotes = null
+              },
+              onDelete = { pendingDeleteId = entry.id }
+            )
+          }
+        } else {
+          item { Text("No frames saved yet. Save an exposure from the meter to begin this roll.") }
         }
       }
     }
   }
 
   if (showNewRoll) {
+    val capacity = newCapacity.toIntOrNull()
+    val validName = newRollName.trim().length in 1..100
     AlertDialog(
-      onDismissRequest = { showNewRoll = false },
+      onDismissRequest = { if (!saving) { showNewRoll = false; requestedNewRoll = false } },
       title = { Text("Start a new roll") },
       text = {
-        Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-          Text("Your saved frames stay in the previous roll. The new roll starts at frame 1.")
+        Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+          Text(listOfNotNull(camera?.name, stock?.name ?: "Unlisted film", "ISO " + (customIso ?: stock?.iso ?: 400), format.displayName).joinToString(" · "))
+          Text("Uses the film and camera setup currently selected on the meter.", style = MaterialTheme.typography.bodyMedium)
           OutlinedTextField(
-            value = newRollName,
-            onValueChange = { newRollName = it },
-            label = { Text("Roll name") },
-            singleLine = true
+            newRollName, { newRollName = it }, label = { Text("Roll name") }, singleLine = true, enabled = !saving,
+            isError = newRollName.isNotBlank() && !validName,
+            supportingText = if (newRollName.trim().length > 100) { { Text("Use 100 characters or fewer.") } } else null
           )
+          OutlinedTextField(
+            newCapacity, { newCapacity = it }, label = { Text("Frames on this roll") },
+            singleLine = true, enabled = !saving, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            isError = capacity == null || capacity !in 1..1000
+          )
+          Text("Previous rolls and their saved frames are kept.", style = MaterialTheme.typography.bodyMedium)
         }
       },
       confirmButton = {
         TextButton(
-          enabled = newRollName.isNotBlank() && ready && !saving,
+          enabled = !saving && ready && validName && capacity != null && capacity in 1..1000,
           onClick = {
-            viewModel.startNewRoll(newRollName.trim())
-            showNewRoll = false
+            previousRollId = currentRoll?.id
+            requestedNewRoll = true
+            viewModel.startNewRoll(newRollName.trim(), capacity!!)
           }
-        ) { Text("Start roll") }
+        ) { Text(if (saving) "Starting…" else "Start roll") }
       },
-      dismissButton = { TextButton(onClick = { showNewRoll = false }) { Text("Cancel") } }
+      dismissButton = { TextButton(onClick = { showNewRoll = false; requestedNewRoll = false }, enabled = !saving) { Text("Cancel") } }
+    )
+  }
+
+  if (editingNumber != null && loadedRoll != null) {
+    val editingFrame = editingNumber == "frame"
+    val number = numberDraft.toIntOrNull()
+    val highestSaved = logs.filter { it.rollId == loadedRoll.id }.maxOfOrNull { it.frameNumber } ?: 0
+    val minimum = if (editingFrame) highestSaved else loadedRoll.lastFrameNumber.coerceAtLeast(1)
+    val maximum = if (editingFrame) loadedRoll.frameCapacity else 1000
+    AlertDialog(
+      onDismissRequest = { if (!saving) editingNumber = null },
+      title = { Text(if (editingFrame) "Set physical frame" else "Roll capacity") },
+      text = {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+          Text(
+            if (editingFrame) "Enter the last frame you exposed on the camera. This does not delete or renumber saved frames."
+            else "Choose how many exposures this roll holds."
+          )
+          OutlinedTextField(
+            numberDraft, { numberDraft = it },
+            label = { Text(if (editingFrame) "Last frame exposed" else "Frames on this roll") },
+            singleLine = true, enabled = !saving,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            isError = number == null || number !in minimum..maximum,
+            supportingText = {
+              Text(if (minimum <= maximum) "Enter a number from " + minimum + " to " + maximum + "."
+              else "Increase the roll capacity before changing the frame.")
+            }
+          )
+          if (editingFrame && number != null && number in minimum..maximum) {
+            Text(if (number < loadedRoll.frameCapacity) "The next saved frame will be " + (number + 1) + "."
+            else "This roll is full. Finish it or increase its capacity.")
+          }
+        }
+      },
+      confirmButton = {
+        TextButton(enabled = !saving && number != null && number in minimum..maximum, onClick = {
+          submittedNumber = number
+          if (editingFrame) viewModel.setCurrentFrame(number!!) else viewModel.setCurrentRollFrameCapacity(number!!)
+        }) { Text(if (saving) "Saving…" else "Save") }
+      },
+      dismissButton = { TextButton(onClick = { editingNumber = null }, enabled = !saving) { Text("Cancel") } }
+    )
+  }
+
+  activeEntry?.let { entry ->
+    AlertDialog(
+      onDismissRequest = { if (!saving) editingEntryId = null },
+      title = { Text("Frame " + entry.frameNumber) },
+      text = {
+        Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+          Text(entry.apertureText + " · " + ExposureCalculator.formatSeconds(entry.correctedSeconds))
+          OutlinedTextField(
+            notesDraft, { notesDraft = it }, label = { Text("Note") },
+            placeholder = { Text("Subject, filter, location, or anything to remember") },
+            minLines = 3, maxLines = 8, enabled = !saving, modifier = Modifier.fillMaxWidth(),
+            isError = notesDraft.length > 5000,
+            supportingText = if (notesDraft.length > 5000) { { Text("Use 5,000 characters or fewer.") } } else null
+          )
+        }
+      },
+      confirmButton = {
+        TextButton(enabled = !saving && notesDraft.length <= 5000 && notesDraft != entry.notes, onClick = {
+          submittedNotes = notesDraft
+          viewModel.updateLogNotes(entry.id, notesDraft)
+        }) { Text(if (saving) "Saving…" else "Save note") }
+      },
+      dismissButton = { TextButton(onClick = { editingEntryId = null }, enabled = !saving) { Text("Close") } }
     )
   }
 
@@ -211,50 +371,64 @@ fun RollsScreen(viewModel: LightMeterViewModel, modifier: Modifier = Modifier) {
       title = { Text("Delete frame " + entry.frameNumber + "?") },
       text = { Text("This removes the saved exposure from " + entry.rollName + ". It cannot be undone.") },
       confirmButton = {
-        TextButton(enabled = !saving, onClick = {
-          viewModel.deleteLogEntry(entry.id)
-          pendingDeleteId = null
-        }) { Text("Delete frame", color = MaterialTheme.colorScheme.error) }
+        TextButton(enabled = !saving, onClick = { viewModel.deleteLogEntry(entry.id); pendingDeleteId = null }) {
+          Text("Delete frame", color = MaterialTheme.colorScheme.error)
+        }
       },
       dismissButton = { TextButton(onClick = { pendingDeleteId = null }) { Text("Keep frame") } }
     )
   }
+  exportError?.let { message ->
+    AlertDialog(onDismissRequest = { exportError = null }, title = { Text("Sharing unavailable") },
+      text = { Text(message) }, confirmButton = { TextButton(onClick = { exportError = null }) { Text("OK") } })
+  }
 }
 
 @Composable
-private fun FilmLogRow(entry: FilmLogEntry, onDelete: () -> Unit) {
-  val date = remember(entry.timestamp) {
-    DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(entry.timestamp))
+private fun RollCard(roll: FilmRoll, state: String, onClick: () -> Unit) {
+  Card(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
+    Row(Modifier.padding(20.dp), verticalAlignment = Alignment.CenterVertically) {
+      Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(state, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+        Text(roll.name, style = MaterialTheme.typography.titleLarge)
+        Text(roll.filmStockName.ifBlank { "Unlisted film" } + " · ISO " + roll.iso + " · " + formatName(roll.format), style = MaterialTheme.typography.bodyMedium)
+        Text("Frame " + roll.lastFrameNumber + " of " + roll.frameCapacity, style = MaterialTheme.typography.bodyMedium)
+      }
+      Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null)
+    }
   }
-  val hasCorrection = entry.correctedSeconds.isFinite() && entry.correctedSeconds > 0.0 &&
-    entry.correctedSeconds != entry.rawSeconds
-  val shutter = if (hasCorrection) ExposureCalculator.formatSeconds(entry.correctedSeconds) else entry.shutterText
-  Card(Modifier.fillMaxWidth()) {
+}
+
+private fun formatName(name: String): String = CameraFormat.entries.firstOrNull { it.name == name }?.displayName ?: name
+
+@Composable
+private fun FilmLogRow(entry: FilmLogEntry, onOpen: () -> Unit, onDelete: () -> Unit) {
+  val date = remember(entry.timestamp) { DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(entry.timestamp)) }
+  val hasCorrection = !entry.isManual && entry.correctedSeconds.isFinite() &&
+    entry.correctedSeconds > 0.0 && entry.correctedSeconds != entry.rawSeconds
+  Card(onClick = onOpen, modifier = Modifier.fillMaxWidth()) {
     Row(Modifier.padding(start = 20.dp, top = 16.dp, bottom = 16.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
       Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text("Frame " + entry.frameNumber, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-        Text(entry.apertureText + " · " + shutter, style = MaterialTheme.typography.titleLarge)
-        if (hasCorrection) {
-          Text(
-            "Metered " + ExposureCalculator.formatSeconds(entry.rawSeconds) + " · film correction applied",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-          )
+        Text(entry.apertureText + " · " + ExposureCalculator.formatSeconds(entry.correctedSeconds), style = MaterialTheme.typography.titleLarge)
+        if (entry.isManual) Text("Manual record", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+        if (hasCorrection) Text(
+          "Metered " + ExposureCalculator.formatSeconds(entry.rawSeconds) + " · film correction applied",
+          style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text(entry.filmStockName + " · ISO " + entry.iso + " · " + entry.format, style = MaterialTheme.typography.bodyMedium)
+        if (entry.cameraName.isNotBlank() || entry.focalLengthMm > 0) {
+          Text(listOfNotNull(entry.cameraName.takeIf { it.isNotBlank() }, entry.focalLengthMm.takeIf { it > 0 }?.let { "$it mm" }).joinToString(" · "),
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Text(
-          entry.filmStockName + " · ISO " + entry.iso + " · " + entry.format,
-          style = MaterialTheme.typography.bodyMedium
+          date + if (entry.hasMeterReading) " · EV " + String.format(Locale.getDefault(), "%.1f", entry.evValue) else "",
+          style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant
         )
-        Text(
-          date + " · EV " + String.format(Locale.getDefault(), "%.1f", entry.evValue),
-          style = MaterialTheme.typography.bodySmall,
-          color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        if (entry.notes.isNotBlank()) Text(entry.notes, style = MaterialTheme.typography.bodyMedium)
+        Text(entry.notes.ifBlank { "Tap to add a note" }, style = MaterialTheme.typography.bodyMedium, maxLines = 3, overflow = TextOverflow.Ellipsis,
+          color = if (entry.notes.isBlank()) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface)
       }
-      IconButton(onClick = onDelete) {
-        Icon(Icons.Default.DeleteOutline, contentDescription = "Delete frame " + entry.frameNumber)
-      }
+      IconButton(onClick = onDelete) { Icon(Icons.Default.DeleteOutline, contentDescription = "Delete frame " + entry.frameNumber) }
     }
   }
 }
@@ -263,22 +437,47 @@ private fun FilmLogRow(entry: FilmLogEntry, onDelete: () -> Unit) {
 fun SettingsScreen(
   viewModel: LightMeterViewModel,
   modifier: Modifier = Modifier,
-  onOpenSunny16: () -> Unit = {}
+  onOpenSunny16: () -> Unit = {},
+  openCameraSetup: Boolean = false
 ) {
   val stocks by viewModel.allStocks.collectAsStateWithLifecycle()
   val addingFilm by viewModel.isAddingFilm.collectAsStateWithLifecycle()
   val filmAddedId by viewModel.filmAddedId.collectAsStateWithLifecycle()
   val saving by viewModel.isSaving.collectAsStateWithLifecycle()
-  val offset by viewModel.calibrationOffsetEv.collectAsStateWithLifecycle()
+  val cameras by viewModel.allCameraSetups.collectAsStateWithLifecycle()
+  val currentCamera by viewModel.currentCameraSetup.collectAsStateWithLifecycle()
+  val savingCamera by viewModel.isSavingCameraSetup.collectAsStateWithLifecycle()
+  val cameraSavedId by viewModel.cameraSetupSavedId.collectAsStateWithLifecycle()
+  val activeSource by viewModel.measurementSource.collectAsStateWithLifecycle()
+  val offsets by viewModel.calibrationOffsets.collectAsStateWithLifecycle()
+  var calibrationSourceName by rememberSaveable {
+    mutableStateOf(if (viewModel.measurementSource.value == MeasurementSource.SENSOR) MeasurementSource.SENSOR.name else MeasurementSource.CAMERA.name)
+  }
+  val calibrationSource = MeasurementSource.valueOf(calibrationSourceName)
+  val offset = offsets[calibrationSource] ?: 0f
+  var showManualCalibration by rememberSaveable { mutableStateOf(false) }
+  var showCalibration by rememberSaveable { mutableStateOf(false) }
   var hapticsEnabled by remember { mutableStateOf(viewModel.hapticManager.isHapticsEnabled) }
   var showAddFilm by rememberSaveable { mutableStateOf(false) }
   var pendingDeleteId by rememberSaveable { mutableStateOf<Int?>(null) }
+  var filmDetailsId by rememberSaveable { mutableStateOf<Int?>(null) }
+  var showCamera by rememberSaveable { mutableStateOf(false) }
+  var editingCameraId by rememberSaveable { mutableStateOf<Int?>(null) }
+  var cameraOpenHandled by rememberSaveable { mutableStateOf(false) }
 
   LaunchedEffect(filmAddedId) {
-    if (filmAddedId != null) {
-      showAddFilm = false
-      viewModel.clearFilmAddedReceipt()
-    }
+    if (filmAddedId != null) { showAddFilm = false; viewModel.clearFilmAddedReceipt() }
+  }
+  LaunchedEffect(cameraSavedId) {
+    if (cameraSavedId != null) { showCamera = false; viewModel.clearCameraSetupSavedReceipt() }
+  }
+  LaunchedEffect(openCameraSetup) {
+    if (openCameraSetup && !cameraOpenHandled) {
+      editingCameraId = null
+      viewModel.clearCameraSetupSavedReceipt()
+      showCamera = true
+      cameraOpenHandled = true
+    } else if (!openCameraSetup) cameraOpenHandled = false
   }
 
   Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
@@ -288,100 +487,135 @@ fun SettingsScreen(
       verticalArrangement = Arrangement.spacedBy(20.dp)
     ) {
       item {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+          Text("Cameras", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+          TextButton(onClick = {
+            editingCameraId = null
+            viewModel.clearCameraSetupSavedReceipt()
+            showCamera = true
+          }, enabled = !savingCamera) {
+            Icon(Icons.Default.Add, contentDescription = null)
+            Text("Add camera", Modifier.padding(start = 4.dp))
+          }
+        }
+        if (cameras.isEmpty()) Text("Save your camera's shutter speeds and aperture range.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        else TextButton(onClick = { viewModel.selectCameraSetup(null) }, enabled = !saving) { Text("Use without a saved camera") }
+      }
+      items(cameras, key = { it.id }) { camera ->
+        Row(Modifier.fillMaxWidth().selectable(
+          selected = currentCamera?.id == camera.id, enabled = !saving, role = Role.RadioButton,
+          onClick = { viewModel.selectCameraSetup(camera.id) }
+        ),
+          verticalAlignment = Alignment.CenterVertically) {
+          RadioButton(selected = currentCamera?.id == camera.id, onClick = null)
+          Column(Modifier.weight(1f).padding(horizontal = 8.dp)) {
+            Text(camera.name, style = MaterialTheme.typography.titleMedium)
+            Text(formatName(camera.format) + " · " + camera.focalLengthMm + " mm", color = MaterialTheme.colorScheme.onSurfaceVariant)
+          }
+          IconButton(enabled = !savingCamera, onClick = {
+            editingCameraId = camera.id
+            viewModel.clearCameraSetupSavedReceipt()
+            showCamera = true
+          }) { Icon(Icons.Default.Edit, contentDescription = "Edit " + camera.name) }
+        }
+      }
+      item {
         Card(Modifier.fillMaxWidth()) {
           Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("Calibration", style = MaterialTheme.typography.titleLarge)
-            Text(
-              "Compare readings with a trusted meter, then adjust the EV offset for this device. Accuracy depends on the phone and measuring conditions.",
-              style = MaterialTheme.typography.bodyMedium,
-              color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Text(
-              String.format(Locale.getDefault(), "%+.1f EV", offset),
-              style = MaterialTheme.typography.headlineSmall,
-              color = MaterialTheme.colorScheme.primary
-            )
-            Slider(
-              value = offset,
-              onValueChange = viewModel::setCalibrationOffset,
-              valueRange = -3f..3f,
-              steps = 11,
-              modifier = Modifier.semantics { contentDescription = "Calibration offset in EV" }
-            )
-            TextButton(onClick = { viewModel.setCalibrationOffset(0f) }, enabled = offset != 0f) { Text("Reset calibration") }
+            Text("Compare a held reading with a trusted meter. Camera and light-sensor adjustments are saved separately.",
+              style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Button(onClick = { showCalibration = true }, enabled = activeSource != MeasurementSource.SUNNY_16 && !saving) {
+              Text("Compare with a reference meter")
+            }
+            if (activeSource == MeasurementSource.SUNNY_16) Text("Choose Camera or Light sensor on the meter before calibrating.", style = MaterialTheme.typography.bodyMedium)
+            TextButton(onClick = { showManualCalibration = !showManualCalibration }) {
+              Text(if (showManualCalibration) "Hide manual adjustment" else "Manual adjustment")
+            }
+            if (showManualCalibration) {
+              Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(
+                  selected = calibrationSource == MeasurementSource.CAMERA,
+                  onClick = { calibrationSourceName = MeasurementSource.CAMERA.name },
+                  label = { Text("Camera") }, modifier = Modifier.weight(1f)
+                )
+                FilterChip(
+                  selected = calibrationSource == MeasurementSource.SENSOR,
+                  onClick = { calibrationSourceName = MeasurementSource.SENSOR.name },
+                  label = { Text("Light sensor") }, modifier = Modifier.weight(1f)
+                )
+              }
+              Text(String.format(Locale.getDefault(), "%+.1f EV", offset), style = MaterialTheme.typography.headlineSmall)
+              Slider(
+                value = offset, onValueChange = { viewModel.setCalibrationOffset(it, calibrationSource) },
+                valueRange = -3f..3f, steps = 11, enabled = !saving,
+                modifier = Modifier.semantics { contentDescription = "Calibration offset in EV" }
+              )
+              TextButton(enabled = offset != 0f && !saving, onClick = { viewModel.setCalibrationOffset(0f, calibrationSource) }) {
+                Text("Reset this source")
+              }
+            }
           }
         }
-      }
-      item {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-          Column(Modifier.weight(1f).padding(end = 16.dp)) {
-            Text("Haptic feedback", style = MaterialTheme.typography.titleMedium)
-            Text("A small tick when you adjust exposure.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-          }
-          Switch(modifier = Modifier.semantics { contentDescription = "Haptic feedback" }, checked = hapticsEnabled, onCheckedChange = {
-            hapticsEnabled = it
-            viewModel.setHapticsEnabled(it)
-          })
-        }
-      }
-      item {
-        TextButton(onClick = onOpenSunny16) { Text("Sunny 16 guide") }
-        HorizontalDivider()
       }
       item {
         Row(verticalAlignment = Alignment.CenterVertically) {
+          Column(Modifier.weight(1f).padding(end = 16.dp)) {
+            Text("Haptic feedback", style = MaterialTheme.typography.titleMedium)
+            Text("A small tick when you adjust exposure.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+          }
+          Switch(
+            modifier = Modifier.semantics { contentDescription = "Haptic feedback" }, checked = hapticsEnabled,
+            onCheckedChange = { hapticsEnabled = it; viewModel.setHapticsEnabled(it) }
+          )
+        }
+      }
+      item { TextButton(onClick = onOpenSunny16) { Text("Sunny 16 guide") }; HorizontalDivider() }
+      item {
+        Row(verticalAlignment = Alignment.CenterVertically) {
           Text("Film library", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
-          TextButton(onClick = {
-            viewModel.clearFilmAddedReceipt()
-            showAddFilm = true
-          }) {
+          TextButton(onClick = { viewModel.clearFilmAddedReceipt(); showAddFilm = true }) {
             Icon(Icons.Default.Add, contentDescription = null)
             Text("Add film", Modifier.padding(start = 4.dp))
           }
         }
       }
       items(stocks, key = { it.id }) { film ->
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+        Row(
+          Modifier.fillMaxWidth().clickable { filmDetailsId = film.id },
+          verticalAlignment = Alignment.CenterVertically
+        ) {
           Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(film.name, style = MaterialTheme.typography.titleMedium)
             Text(film.brand + " · ISO " + film.iso + " · " + film.type, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            if (film.isCustom) Text("Custom film", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+            Text(film.correctionLabel, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
           }
           if (film.isCustom) {
-            IconButton(onClick = { pendingDeleteId = film.id }) {
-              Icon(Icons.Default.DeleteOutline, contentDescription = "Delete " + film.name)
-            }
-          }
+            IconButton(onClick = { pendingDeleteId = film.id }) { Icon(Icons.Default.DeleteOutline, contentDescription = "Delete " + film.name) }
+          } else Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null)
         }
-      }
-      item {
-        Text(
-          "Long-exposure corrections use each film's reciprocity profile. Check the film maker's guidance before a critical exposure.",
-          style = MaterialTheme.typography.bodyMedium,
-          color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
       }
     }
   }
 
-  if (showAddFilm) {
-    AddFilmDialog(
-      saving = addingFilm,
-      onDismiss = { showAddFilm = false },
-      onAdd = viewModel::addCustomFilmStock
-    )
-  }
-
+  if (showCamera) CameraSetupDialog(
+    initial = cameras.firstOrNull { it.id == editingCameraId },
+    saving = savingCamera,
+    onDismiss = { showCamera = false },
+    onSave = viewModel::saveCameraSetup
+  )
+  if (showCalibration) CalibrationDialog(viewModel, onDismiss = { showCalibration = false })
+  stocks.firstOrNull { it.id == filmDetailsId }?.let { FilmDetailsDialog(it) { filmDetailsId = null } }
+  if (showAddFilm) AddFilmDialog(addingFilm, { showAddFilm = false }, viewModel::addCustomFilmStock)
   stocks.firstOrNull { it.id == pendingDeleteId }?.let { film ->
     AlertDialog(
       onDismissRequest = { pendingDeleteId = null },
       title = { Text("Delete " + film.name + "?") },
       text = { Text("This removes the custom film profile. Saved exposures are kept.") },
       confirmButton = {
-        TextButton(enabled = !saving, onClick = {
-          viewModel.deleteFilmStock(film.id)
-          pendingDeleteId = null
-        }) { Text("Delete film", color = MaterialTheme.colorScheme.error) }
+        TextButton(enabled = !saving, onClick = { viewModel.deleteFilmStock(film.id); pendingDeleteId = null }) {
+          Text("Delete film", color = MaterialTheme.colorScheme.error)
+        }
       },
       dismissButton = { TextButton(onClick = { pendingDeleteId = null }) { Text("Keep film") } }
     )
@@ -393,56 +627,58 @@ private fun AddFilmDialog(saving: Boolean, onDismiss: () -> Unit, onAdd: (FilmSt
   var name by rememberSaveable { mutableStateOf("") }
   var brand by rememberSaveable { mutableStateOf("") }
   var isoText by rememberSaveable { mutableStateOf("400") }
+  var type by rememberSaveable { mutableStateOf("Color Negative") }
+  var showTypes by rememberSaveable { mutableStateOf(false) }
+  var hasProfile by rememberSaveable { mutableStateOf(false) }
   var exponentText by rememberSaveable { mutableStateOf(NumberFormat.getNumberInstance().format(1.25)) }
   val iso = isoText.toIntOrNull()
   val exponent = parseReciprocityExponent(exponentText)
-  val isoValid = iso != null && iso in 1..12800
-  val exponentValid = isValidReciprocityExponent(exponent)
+  val film = createUnlistedFilm(name, brand, iso, type, hasProfile, exponent)
 
   AlertDialog(
     onDismissRequest = { if (!saving) onDismiss() },
-    title = { Text("Add film") },
+    title = { Text("Add unlisted film") },
     text = {
-      Column(
-        modifier = Modifier.verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-      ) {
+      Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         OutlinedTextField(name, { name = it }, label = { Text("Film name") }, singleLine = true, enabled = !saving)
         OutlinedTextField(brand, { brand = it }, label = { Text("Brand (optional)") }, singleLine = true, enabled = !saving)
         OutlinedTextField(
           isoText, { isoText = it }, label = { Text("Box ISO") }, singleLine = true, enabled = !saving,
           keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-          isError = !isoValid,
-          supportingText = if (isoValid) null else {
-            { Text("Enter an ISO from 1 to 12,800.") }
+          isError = iso == null || iso !in 1..12800,
+          supportingText = if (iso != null && iso in 1..12800) null else { { Text("Enter an ISO from 1 to 12,800.") } }
+        )
+        Box {
+          OutlinedButton(onClick = { showTypes = true }, enabled = !saving) { Text(type) }
+          DropdownMenu(expanded = showTypes, onDismissRequest = { showTypes = false }) {
+            listOf("Color Negative", "Black & White", "Color Slide", "Tungsten Cine").forEach { value ->
+              DropdownMenuItem(text = { Text(value) }, onClick = { type = value; showTypes = false })
+            }
           }
-        )
-        OutlinedTextField(
-          exponentText, { exponentText = it }, label = { Text("Reciprocity exponent") }, singleLine = true, enabled = !saving,
-          keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-          isError = !exponentValid,
-          supportingText = { Text(if (exponentValid) "Use the film maker's value for tᵖ. Use 1 for no correction." else "Use an exponent of at least 1 that keeps a 60-second exposure within one day.") }
-        )
+        }
+        Row(
+          Modifier.fillMaxWidth().toggleable(
+            value = hasProfile, enabled = !saving, role = Role.Checkbox, onValueChange = { hasProfile = it }
+          ),
+          verticalAlignment = Alignment.CenterVertically
+        ) {
+          Checkbox(checked = hasProfile, onCheckedChange = null, enabled = !saving)
+          Text("I have a tested long-exposure profile", Modifier.weight(1f).padding(start = 8.dp))
+        }
+        if (hasProfile) {
+          OutlinedTextField(
+            exponentText, { exponentText = it }, label = { Text("Reciprocity exponent") },
+            singleLine = true, enabled = !saving, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+            isError = !isValidReciprocityExponent(exponent),
+            supportingText = { Text("Use your tested tᵖ exponent. Corrected exposures must stay within one day.") }
+          )
+        } else Text("Film correction unknown. Metered settings are available; record the exposure you choose.", style = MaterialTheme.typography.bodyMedium)
       }
     },
     confirmButton = {
-      TextButton(
-        enabled = !saving && name.isNotBlank() && isoValid && exponentValid,
-        onClick = {
-          if (!saving && name.isNotBlank() && isoValid && exponentValid) {
-            onAdd(FilmStock(
-              name = name.trim(),
-              brand = brand.trim().ifBlank { "Custom" },
-              iso = iso!!,
-              type = "Color Negative",
-              reciprocityFactor = exponent!!,
-              description = "Custom film profile",
-              badgeStyle = "CUSTOM",
-              isCustom = true
-            ))
-          }
-        }
-      ) { Text(if (saving) "Saving film…" else "Save film") }
+      TextButton(enabled = !saving && film != null, onClick = {
+        if (!saving && film != null) onAdd(film)
+      }) { Text(if (saving) "Saving film…" else "Save film") }
     },
     dismissButton = { TextButton(onClick = onDismiss, enabled = !saving) { Text("Cancel") } }
   )
@@ -458,4 +694,18 @@ internal fun parseReciprocityExponent(text: String, locale: Locale = Locale.getD
   val position = ParsePosition(0)
   val number = format.parse(input, position)?.toDouble() ?: return null
   return number.takeIf { position.index == input.length && it.isFinite() }
+}
+
+internal fun createUnlistedFilm(
+  name: String, brand: String, iso: Int?, type: String, hasProfile: Boolean, exponent: Double?
+): FilmStock? {
+  if (name.isBlank() || iso == null || iso !in 1..12800 ||
+    type !in listOf("Color Negative", "Black & White", "Color Slide", "Tungsten Cine") ||
+    (hasProfile && !isValidReciprocityExponent(exponent))) return null
+  return FilmStock(
+    name = name.trim(), brand = brand.trim().ifBlank { "Custom" }, iso = iso, type = type,
+    reciprocityFactor = if (hasProfile) exponent!! else 1.0,
+    description = if (hasProfile) "Custom tested film profile" else "Unlisted film",
+    badgeStyle = "CUSTOM", isCustom = true, hasReciprocityProfile = hasProfile
+  )
 }

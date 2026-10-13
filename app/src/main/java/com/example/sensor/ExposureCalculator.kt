@@ -55,15 +55,17 @@ object ExposureCalculator {
    * Given an aperture and target EV at current ISO, computes closest shutter speed index.
    * t = N^2 / (2^EV_s)
    */
-  fun calculateShutterIndexForAperture(apertureIndex: Int, evForIso: Double): Int {
+  fun calculateShutterIndexForAperture(apertureIndex: Int, evForIso: Double,
+    apertures: List<Double> = APERTURE_VALUES, shutters: List<Double> = SHUTTER_SECONDS): Int {
     require(evForIso.isFinite())
-    val n = APERTURE_VALUES[apertureIndex.coerceIn(0, APERTURE_VALUES.lastIndex)]
+    require(apertures.isNotEmpty() && shutters.isNotEmpty())
+    val n = apertures[apertureIndex.coerceIn(0, apertures.lastIndex)]
     val targetLogSeconds = 2 * log2(n) - evForIso
 
     var closestIdx = 0
     var minDiff = Double.MAX_VALUE
-    for (i in SHUTTER_SECONDS.indices) {
-      val diff = abs(log2(SHUTTER_SECONDS[i]) - targetLogSeconds)
+    for (i in shutters.indices) {
+      val diff = abs(log2(shutters[i]) - targetLogSeconds)
       if (diff < minDiff) {
         minDiff = diff
         closestIdx = i
@@ -76,14 +78,15 @@ object ExposureCalculator {
    * Given a shutter speed and target EV at current ISO, computes closest aperture index.
    * N = sqrt(t * 2^EV_s)
    */
-  fun calculateApertureIndexForShutterSeconds(t: Double, evForIso: Double): Int {
+  fun calculateApertureIndexForShutterSeconds(t: Double, evForIso: Double,
+    apertures: List<Double> = APERTURE_VALUES): Int {
     require(t.isFinite() && t > 0.0 && evForIso.isFinite())
     val targetLogAperture = (log2(t) + evForIso) / 2
 
     var closestIdx = 0
     var minDiff = Double.MAX_VALUE
-    for (i in APERTURE_VALUES.indices) {
-      val diff = abs(log2(APERTURE_VALUES[i]) - targetLogAperture)
+    for (i in apertures.indices) {
+      val diff = abs(log2(apertures[i]) - targetLogAperture)
       if (diff < minDiff) {
         minDiff = diff
         closestIdx = i
@@ -97,9 +100,10 @@ object ExposureCalculator {
    * Current EV dial = log2(N^2 / t)
    * EV delta = Current EV dial - target EV
    */
-  fun calculateEvDelta(apertureIndex: Int, shutterSeconds: Double, targetEvForIso: Double): Double {
+  fun calculateEvDelta(apertureIndex: Int, shutterSeconds: Double, targetEvForIso: Double,
+    apertures: List<Double> = APERTURE_VALUES): Double {
     require(shutterSeconds.isFinite() && shutterSeconds > 0.0 && targetEvForIso.isFinite())
-    val n = APERTURE_VALUES[apertureIndex]
+    val n = apertures[apertureIndex]
     val currentSettingEv = log2((n * n) / shutterSeconds)
     return currentSettingEv - targetEvForIso
   }
@@ -131,7 +135,10 @@ object ExposureCalculator {
     return when {
       sec < 0.9 -> {
         val standard = SHUTTER_SECONDS.indexOfFirst { abs(it - sec) < 1e-9 }
+        val reciprocal = 1.0 / sec
         if (standard >= 0) "${SHUTTER_LABELS[standard]}s"
+        else if (reciprocal <= Int.MAX_VALUE && abs(reciprocal - reciprocal.roundToInt()) < 1e-7)
+          "1/${reciprocal.roundToInt()}s"
         else String.format(java.util.Locale.US, "%.3gs", sec)
       }
       sec < 10.0 -> {
@@ -141,5 +148,30 @@ object ExposureCalculator {
         "${sec.roundToInt()}s"
       }
     }
+  }
+
+  fun formatAperture(value: Double): String {
+    val standard = APERTURE_VALUES.indexOfFirst { abs(it - value) < 1e-9 }
+    return if (standard >= 0) APERTURE_LABELS[standard]
+      else "f/" + String.format(java.util.Locale.US, "%.2f", value).trimEnd('0').trimEnd('.')
+  }
+
+  /** Camera dial values, entered as fractions or seconds; comma/space separates values. */
+  fun parseShutterSpeeds(text: String): List<Double>? {
+    val tokens = text.trim().split(Regex("[,;\\s]+"))
+    if (tokens.isEmpty() || tokens.size > 64) return null
+    val values = tokens.map { token ->
+      val parts = token.lowercase(java.util.Locale.ROOT).removeSuffix("s").split('/')
+      val seconds = when (parts.size) {
+        1 -> parts[0].toDoubleOrNull()
+        2 -> parts[0].toDoubleOrNull()?.let { numerator ->
+          parts[1].toDoubleOrNull()?.takeIf { it > 0.0 }?.let { numerator / it }
+        }
+        else -> null
+      } ?: return null
+      if (!seconds.isFinite() || seconds <= 0.0 || seconds > 60.0) return null
+      seconds
+    }
+    return values.distinct().sorted().takeIf { it.isNotEmpty() }
   }
 }

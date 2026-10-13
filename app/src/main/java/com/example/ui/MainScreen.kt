@@ -66,7 +66,7 @@ fun MainScreen(viewModel: LightMeterViewModel = viewModel()) {
       TopAppBar(
         title = {
           Text(when (detail) {
-            "settings" -> "Settings"
+            "settings", "camera_settings" -> "Settings"
             "sunny16" -> "Sunny 16"
             else -> if (selectedTab == "meter") "LuxMeter" else "Rolls"
           })
@@ -113,7 +113,7 @@ fun MainScreen(viewModel: LightMeterViewModel = viewModel()) {
   ) { padding ->
     Box(Modifier.fillMaxSize().padding(padding)) {
       when (detail) {
-        "settings" -> SettingsScreen(viewModel, onOpenSunny16 = {
+        "settings", "camera_settings" -> SettingsScreen(viewModel, openCameraSetup = detail == "camera_settings", onOpenSunny16 = {
           returnToSettings = true
           detail = "sunny16"
         })
@@ -123,7 +123,9 @@ fun MainScreen(viewModel: LightMeterViewModel = viewModel()) {
           detail = null
         })
         else -> if (selectedTab == "meter") {
-          LightMeterScreen(viewModel, onOpenSunny16 = { detail = "sunny16" })
+          LightMeterScreen(viewModel, onOpenSunny16 = { detail = "sunny16" },
+            onOpenRolls = { selectedTab = "rolls"; detail = null },
+            onOpenCameraSetup = { detail = "camera_settings" })
         } else {
           RollsScreen(viewModel)
         }

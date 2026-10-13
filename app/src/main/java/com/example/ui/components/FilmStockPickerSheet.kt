@@ -14,6 +14,7 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -53,6 +54,7 @@ fun FilmStockPickerSheet(
 ) {
   val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
   var showIsoMenu by rememberSaveable { mutableStateOf(false) }
+  var detailsFilmId by rememberSaveable { mutableStateOf<Int?>(null) }
   val iso = customIso ?: selectedStock?.iso ?: 400
   val view = LocalView.current
 
@@ -127,8 +129,12 @@ fun FilmStockPickerSheet(
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
               )
+              Text(film.correctionLabel, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             if (selected) Icon(Icons.Default.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+            IconButton(onClick = { detailsFilmId = film.id }) {
+              Icon(Icons.Default.Info, contentDescription = "Details for ${film.name}")
+            }
           }
         }
         if (stocks.isEmpty()) {
@@ -137,5 +143,8 @@ fun FilmStockPickerSheet(
       }
       TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) { Text("Done") }
     }
+  }
+  stocks.firstOrNull { it.id == detailsFilmId }?.let { film ->
+    FilmDetailsDialog(stock = film, onDismiss = { detailsFilmId = null })
   }
 }

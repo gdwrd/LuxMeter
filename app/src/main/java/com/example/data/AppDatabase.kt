@@ -6,24 +6,107 @@ import android.database.sqlite.SQLiteDatabase
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
+import com.example.data.dao.CameraSetupDao
 import com.example.data.dao.FilmLogDao
+import com.example.data.dao.FilmRollDao
 import com.example.data.dao.FilmStockDao
+import com.example.data.model.CameraFormat
+import com.example.data.model.CameraSetup
 import com.example.data.model.FilmLogEntry
+import com.example.data.model.FilmRoll
 import com.example.data.model.FilmStock
+import com.example.data.repository.FilmRepository
 
 @Database(
-  entities = [FilmStock::class, FilmLogEntry::class],
-  version = 1,
+  entities = [FilmStock::class, FilmLogEntry::class, CameraSetup::class, FilmRoll::class],
+  version = 2,
   exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
   abstract fun filmStockDao(): FilmStockDao
   abstract fun filmLogDao(): FilmLogDao
+  abstract fun cameraSetupDao(): CameraSetupDao
+  abstract fun filmRollDao(): FilmRollDao
+
+  fun repository(): FilmRepository = FilmRepository(filmStockDao(), filmLogDao(), cameraSetupDao(), filmRollDao(), this)
 
   companion object {
     @Volatile
     private var INSTANCE: AppDatabase? = null
+
+    val MIGRATION_1_2 = object : Migration(1, 2) {
+      override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE film_stocks ADD COLUMN hasReciprocityProfile INTEGER NOT NULL DEFAULT 1")
+        for (column in listOf(
+          "cameraName TEXT NOT NULL DEFAULT ''", "focalLengthMm INTEGER NOT NULL DEFAULT 0",
+          "meteringSource TEXT NOT NULL DEFAULT ''", "exposureCompensation REAL NOT NULL DEFAULT 0",
+          "filterStops REAL NOT NULL DEFAULT 0", "calibrationEv REAL NOT NULL DEFAULT 0",
+          "correctionKind TEXT NOT NULL DEFAULT ''", "isManual INTEGER NOT NULL DEFAULT 0",
+          "hasMeterReading INTEGER NOT NULL DEFAULT 1"
+        )) db.execSQL("ALTER TABLE film_log_entries ADD COLUMN $column")
+        db.execSQL("""
+          CREATE TABLE IF NOT EXISTS camera_setups (
+            id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+            name TEXT NOT NULL, format TEXT NOT NULL, focalLengthMm INTEGER NOT NULL,
+            minAperture REAL NOT NULL, maxAperture REAL NOT NULL,
+            shutterSpeeds TEXT NOT NULL, allowsBulb INTEGER NOT NULL
+          )
+        """.trimIndent())
+        db.execSQL("""
+          CREATE TABLE IF NOT EXISTS film_rolls (
+            id TEXT NOT NULL PRIMARY KEY, name TEXT NOT NULL, filmStockId INTEGER,
+            filmStockName TEXT NOT NULL, iso INTEGER NOT NULL, format TEXT NOT NULL,
+            cameraSetupId INTEGER, focalLengthMm INTEGER NOT NULL, frameCapacity INTEGER NOT NULL,
+            lastFrameNumber INTEGER NOT NULL, isFinished INTEGER NOT NULL, createdAt INTEGER NOT NULL
+          )
+        """.trimIndent())
+
+        val stockIds = mutableMapOf<String, Int?>()
+        db.query("SELECT name, id FROM film_stocks").use { cursor ->
+          while (cursor.moveToNext()) {
+            val name = cursor.getString(0)
+            stockIds[name] = if (stockIds.containsKey(name)) null else cursor.getInt(1)
+          }
+        }
+        val rolls = linkedMapOf<String, FilmRoll>()
+        db.query("SELECT rollId, rollName, filmStockName, iso, format, timestamp, frameNumber FROM film_log_entries ORDER BY timestamp ASC, id ASC").use { cursor ->
+          while (cursor.moveToNext()) {
+            val id = cursor.getString(0)
+            val frame = cursor.getInt(6).coerceAtLeast(0)
+            val existing = rolls[id]
+            if (existing != null) {
+              rolls[id] = existing.copy(
+                lastFrameNumber = maxOf(existing.lastFrameNumber, frame),
+                frameCapacity = maxOf(existing.frameCapacity, frame)
+              )
+            } else {
+              val oldFormat = cursor.getString(4)
+              val format = CameraFormat.entries.firstOrNull {
+                it.name == oldFormat || it.displayName == oldFormat || it.displayName.replace('×', 'x') == oldFormat
+              } ?: CameraFormat.FORMAT_35MM
+              val stockName = cursor.getString(2)
+              rolls[id] = FilmRoll(
+                id = id, name = cursor.getString(1), filmStockId = stockIds[stockName], filmStockName = stockName,
+                iso = cursor.getInt(3), format = format.name, frameCapacity = maxOf(format.standardFramesPerRoll, frame),
+                lastFrameNumber = frame, isFinished = true, createdAt = cursor.getLong(5)
+              )
+            }
+          }
+        }
+        for (roll in rolls.values) {
+          db.execSQL("""
+            INSERT INTO film_rolls (id, name, filmStockId, filmStockName, iso, format,
+              cameraSetupId, focalLengthMm, frameCapacity, lastFrameNumber, isFinished, createdAt)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          """.trimIndent(), arrayOf<Any?>(
+            roll.id, roll.name, roll.filmStockId, roll.filmStockName, roll.iso, roll.format,
+            roll.cameraSetupId, roll.focalLengthMm, roll.frameCapacity, roll.lastFrameNumber, 1, roll.createdAt
+          ))
+        }
+      }
+    }
 
     fun getDatabase(context: Context): AppDatabase {
       return INSTANCE ?: synchronized(this) {
@@ -33,6 +116,7 @@ abstract class AppDatabase : RoomDatabase() {
           AppDatabase::class.java,
           "luxmeter_analog.db"
         )
+        .addMigrations(MIGRATION_1_2)
         .addCallback(DatabaseCallback())
         .build()
         INSTANCE = instance
