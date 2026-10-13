@@ -65,6 +65,19 @@ Tests cover exposure and depth-of-field calculations, selected-area camera crop/
 
 Before relying on a release, verify camera permission/retry, frame alignment, rotation, held previews, daylight/low-light readings, font scaling, TalkBack, and calibration on physical devices.
 
+## GitHub releases
+
+Push a tag on a commit containing the release workflow to build and publish a signed APK after all CI checks pass:
+
+```sh
+git tag v1.0.1
+git push origin v1.0.1
+```
+
+The release contains **LuxMeter-v1.0.1.apk** and generated release notes. The app version is the tag with an optional leading `v` removed; Android's version code uses the increasing GitHub Actions run number. All tag names trigger releases. Rerunning a published tag keeps its existing APK; a failed draft can resume uploading before publication.
+
+Signing uses a stable PKCS12 keystore with alias `upload`, supplied through repository secrets **KEYSTORE_BASE64**, **STORE_PASSWORD**, and **KEY_PASSWORD**. The keystore is decoded only into the runner's temporary directory and removed after the job. Keep a secure backup of this key and its password: future updates must use the same signing key. This GitHub release key differs from the original installed release's key, so those installations need a reinstall to switch to GitHub APKs.
+
 ## Technical foundation
 
 Kotlin, Jetpack Compose Material 3, CameraX, StateFlow, and Room. Android 7.0 (API 24) or newer. The interface follows the system's light/dark appearance and adapts to wider screens.

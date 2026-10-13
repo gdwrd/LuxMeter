@@ -16,8 +16,10 @@ android {
     applicationId = "com.aistudio.luxmeter.analog"
     minSdk = 24
     targetSdk = 36
-    versionCode = 1
-    versionName = "1.0"
+    val requestedVersionCode = providers.gradleProperty("releaseVersionCode").orElse("1").get().toInt()
+    require(requestedVersionCode in 1..2100000000) { "releaseVersionCode must be between 1 and 2100000000" }
+    versionCode = requestedVersionCode
+    versionName = providers.gradleProperty("releaseVersionName").orElse("1.0").get()
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
