@@ -1,6 +1,19 @@
-# LuxMeter
+<p align="center">
+  <img src="logo.svg" width="96" height="96" alt="LuxMeter viewfinder logo">
+</p>
 
-An Android exposure companion for film photography. Compose a frame, read the exposure, hold it, and optionally save the frame to a roll.
+<h1 align="center">LuxMeter</h1>
+
+<p align="center">
+  An Android exposure companion for film photography.<br>
+  Compose a frame, read the exposure, hold it, and optionally save the frame to a roll.
+</p>
+
+<p align="center">
+  <img src="docs/images/meter-screen.png" width="320" alt="LuxMeter's live camera viewfinder and recommended shutter on a Pixel 9 Pro Fold">
+</p>
+
+<p align="center"><sub>Live camera metering on a Pixel 9 Pro Fold.</sub></p>
 
 ## Shooting
 
