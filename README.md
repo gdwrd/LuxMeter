@@ -59,6 +59,8 @@ Requirements: JDK 17 or newer (tested with JDK 21), Android SDK platform 36.1, b
 
 The wrapper pins Gradle 9.3.1 and verifies its distribution checksum. Debug builds use Android's standard debug signing configuration and install as **LuxMeter Preview** (`com.aistudio.luxmeter.analog.debug`), alongside the release app with separate storage. The APK is written to `app/build/outputs/apk/debug/app-debug.apk`.
 
+GitHub Actions runs unit tests, lint, a debug build, and the full Android UI test suite on an API 35 emulator for every push and pull request. The workflow also supports manual runs. Download **luxmeter-preview** for the debug APK or **android-test-reports** for results from the run's artifacts; they are retained for 14 days.
+
 Tests cover exposure and depth-of-field calculations, selected-area camera crop/rotation/zoom geometry, metadata validation, source isolation and calibration, camera limits/Bulb, exposure/filter adjustments, held readings, loaded rolls, manual and calculated saving, notes/export, migration and transactional rollback, profile repair, backup exclusions, locale inputs, Sunny 16 choices, timer timing, and readable exposure controls.
 
 Before relying on a release, verify camera permission/retry, frame alignment, rotation, held previews, daylight/low-light readings, font scaling, TalkBack, and calibration on physical devices.
