@@ -5,6 +5,8 @@ import android.content.Context
 import android.content.Intent
 import androidx.core.content.FileProvider
 import com.example.data.model.FilmLogEntry
+import com.example.data.model.FilmRoll
+import com.example.data.model.processingLabel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -14,10 +16,10 @@ import java.util.Locale
 import java.util.TimeZone
 
 object RollExport {
-  fun csv(entries: List<FilmLogEntry>): String {
+  fun csv(entries: List<FilmLogEntry>, roll: FilmRoll? = null): String {
     val date = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }
     return buildString {
-      append("Frame,Date UTC,Roll,Film,ISO,Camera,Lens mm,Format,Aperture,Actual seconds,Metered seconds,EV at shooting ISO,Source,Calibration EV,Exposure adjustment stops,Filter stops,Correction,Manual,Notes\r\n")
+      append("Frame,Date UTC,Roll,Film,Shooting EI,Camera,Lens mm,Format,Aperture,Actual seconds,Metered seconds,EV at shooting EI,Source,Calibration EV,Exposure adjustment stops,Filter stops,Correction,Manual,Notes,Box ISO,Processing requested\r\n")
       for (entry in entries.sortedBy { it.frameNumber }) {
         append(listOf(entry.frameNumber.toString(), text(date.format(Date(entry.timestamp))), text(entry.rollName),
           text(entry.filmStockName), entry.iso.toString(), text(entry.cameraName),
@@ -25,7 +27,8 @@ object RollExport {
           entry.correctedSeconds.toString(), entry.rawSeconds.takeIf { it > 0.0 }?.toString().orEmpty(),
           entry.evValue.takeIf { entry.hasMeterReading }?.toString().orEmpty(), text(entry.meteringSource),
           entry.calibrationEv.toString(), entry.exposureCompensation.toString(), entry.filterStops.toString(),
-          text(entry.correctionKind), entry.isManual.toString(), text(entry.notes)).joinToString(","))
+          text(entry.correctionKind), entry.isManual.toString(), text(entry.notes),
+          entry.boxIso?.toString().orEmpty(), text(processingLabel(roll?.pushStops))).joinToString(","))
         append("\r\n")
       }
     }
@@ -38,11 +41,11 @@ object RollExport {
     return "\"" + safe.replace("\"", "\"\"") + "\""
   }
 
-  suspend fun share(context: Context, rollName: String, entries: List<FilmLogEntry>) {
+  suspend fun share(context: Context, roll: FilmRoll, entries: List<FilmLogEntry>) {
     val file = withContext(Dispatchers.IO) {
       val folder = File(context.cacheDir, "roll-exports").apply { check(mkdirs() || isDirectory) }
-      val name = rollName.replace(Regex("[^\\p{L}\\p{N} _-]"), "_").take(48).ifBlank { "Roll" }
-      File.createTempFile("$name-".padEnd(3, '_'), ".csv", folder).apply { writeText(csv(entries), Charsets.UTF_8) }
+      val name = roll.name.replace(Regex("[^\\p{L}\\p{N} _-]"), "_").take(48).ifBlank { "Roll" }
+      File.createTempFile("$name-".padEnd(3, '_'), ".csv", folder).apply { writeText(csv(entries, roll), Charsets.UTF_8) }
     }
     withContext(Dispatchers.Main) {
       val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", file)

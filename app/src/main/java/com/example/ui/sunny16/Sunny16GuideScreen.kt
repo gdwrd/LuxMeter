@@ -44,7 +44,9 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.model.CameraFormat
+import com.example.data.model.processingLabel
 import com.example.sensor.ExposureCalculator
+import com.example.ui.components.FilmSettingsConfirmation
 import com.example.ui.meter.LightMeterViewModel
 import kotlin.math.abs
 import kotlin.math.log2
@@ -74,14 +76,23 @@ fun Sunny16GuideScreen(
 ) {
   val format by viewModel.selectedFormat.collectAsStateWithLifecycle()
   val stock by viewModel.selectedFilmStock.collectAsStateWithLifecycle()
+  val pushStops by viewModel.pushStops.collectAsStateWithLifecycle()
   val initialIso = rememberSaveable { viewModel.activeIso }
   var iso by rememberSaveable { mutableIntStateOf(initialIso) }
   var conditionName by rememberSaveable { mutableStateOf(Sunny16Condition.SUNNY.name) }
   var showIsoMenu by rememberSaveable { mutableStateOf(false) }
   var showExplanation by rememberSaveable { mutableStateOf(false) }
+  var showConfirmation by rememberSaveable { mutableStateOf(false) }
   val condition = Sunny16Condition.valueOf(conditionName)
   val shutter = sunny16ShutterForIso(iso)
   val view = LocalView.current
+  val applyExposure: (Boolean) -> Unit = { confirmed ->
+    if (viewModel.applyFilmSettings(stock, iso, pushStops, confirmed)) {
+      viewModel.hapticManager.performDialClick(view)
+      viewModel.applySunny16Preset(condition.apertureLabel, shutter, iso)
+      onApplyPreset?.invoke(condition, format, iso)
+    }
+  }
 
   Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
     Column(Modifier.widthIn(max = 720.dp).fillMaxSize()) {
@@ -112,6 +123,10 @@ fun Sunny16GuideScreen(
               }
             }
           }
+          Text("Meter at EI $iso · ${processingLabel(pushStops)}", style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
+          Text("Changing ISO keeps the roll's development setting.", style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         item { Text("Choose the light", style = MaterialTheme.typography.titleMedium) }
         items(Sunny16Condition.entries) { option ->
@@ -171,15 +186,20 @@ fun Sunny16GuideScreen(
           Text(condition.apertureLabel + "  ·  " + shutter, style = MaterialTheme.typography.headlineMedium)
           Button(
             onClick = {
-              viewModel.hapticManager.performDialClick(view)
-              viewModel.applySunny16Preset(condition.apertureLabel, shutter, iso)
-              onApplyPreset?.invoke(condition, format, iso)
+              if (viewModel.needsFilmSettingsConfirmation(stock, iso, pushStops)) showConfirmation = true
+              else applyExposure(false)
             },
             modifier = Modifier.fillMaxWidth()
           ) { Text("Use this exposure") }
         }
       }
     }
+  }
+  if (showConfirmation) {
+    FilmSettingsConfirmation(iso, pushStops,
+      onConfirm = { showConfirmation = false; applyExposure(true) },
+      onDismiss = { showConfirmation = false }
+    )
   }
 }
 

@@ -17,7 +17,7 @@
 
 ## Shooting
 
-1. Choose your film and shooting ISO. Changing ISO keeps the film's reciprocity profile. Optionally save a named camera setup with its real shutter speeds, aperture range, format and lens.
+1. Choose your film and shooting speed. In **Film & speed**, choose **Normal** or a push of **+1 to +4 stops**; the app previews the shooting EI and processing to request from your lab. A two-stop push of ISO 400 film meters at EI 1600. Apply with **Use for this roll**; closing the sheet discards your draft. Custom shooting ISO stays available and keeps the film's reciprocity profile without inferring a processing instruction. Optionally save a named camera setup with its real shutter speeds, aperture range, format and lens.
 2. Point the camera at the scene inside the outlined frame. Tap a subject to measure a selected area, or use **Meter centre**. **Whole frame** restores frame metering. The visible area is approximate phone metering, not a dedicated one-degree spot meter.
 3. Choose an aperture to get a shutter recommendation, or switch to shutter priority or manual exposure. The shutter you choose in those modes is the actual exposure duration; film correction is included when calculating aperture or exposure balance.
 4. Use **Exposure adjustments** for compensation in thirds of a stop and a filter on the film camera. Positive compensation gives more exposure. Filter and scene adjustments apply before film reciprocity correction and remain visibly labelled until reset.
@@ -53,6 +53,10 @@ Film, ISO, format, lens, exposure mode, adjustments, calibration, haptics, and t
 Aperture priority chooses an actual shutter-dial value using the film's inverse correction. Supported Bulb exposures of at least one second use the continuous corrected time, avoiding an extra rounding step before film correction. The meter labels Bulb when needed and shows the remaining exposure error when a dial value rounds the target.
 
 Room stores explicit loaded and finished rolls as well as profiles and exposure records. **Continue this roll** restores its camera, film, ISO and progress. **Finish roll** retains its frames; **Reopen roll** resumes it. Set the last physical frame already exposed to catch up after shooting without logging, and choose the actual roll capacity. Frame edits cannot move behind saved photographs. Switching the meter to another camera or film does not relabel a nonempty roll; choose a compatible roll before saving.
+
+Push processing is a roll setting, separate from exposure compensation and filters. New rolls default to Normal processing and the selected film's box speed. Changing a populated roll's shooting speed or processing through **Edit film and processing** requires confirmation because development affects the whole physical roll; existing frame exposure snapshots stay unchanged. Ordinary ISO adjustments do not silently rewrite that roll's plan. Roll details and CSV exports retain the requested processing, and continuing a roll restores it. Older rolls keep their existing shooting ISO with processing marked **not specified** until explicitly chosen.
+
+Push choices record your intended processing; they do not supply development times or certify that a film/lab combination supports the push. Long-exposure correction continues to use the film profile and its existing limits.
 
 Calculated saving requires a valid held reading and supported correction. Manual records are clearly marked and include reference meter data only when a reading is held. Both reject repeated taps and confirm only after storage succeeds. The frame and physical counter commit together. The version 1 to 2 migration preserves existing profiles, record IDs and exposure snapshots, and adopts the active roll from its remembered setup. Built-in profile repair still completes transactionally before queries.
 

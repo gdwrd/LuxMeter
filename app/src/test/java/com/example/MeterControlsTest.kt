@@ -9,11 +9,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.hasScrollToIndexAction
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import com.example.data.model.FilmStock
@@ -75,9 +78,15 @@ class MeterControlsTest {
     var selections = 0
     compose.setContent {
       MyApplicationTheme {
-        FilmStockPickerSheet(listOf(film), null, 400, HapticManager(compose.activity), { selections++ }, {}, {})
+        FilmStockPickerSheet(
+          stocks = listOf(film), selectedStock = null, customIso = 400, pushStops = 0,
+          hapticManager = HapticManager(compose.activity),
+          onApply = { _, _, _, _ -> selections++; true },
+          needsConfirmation = { _, _, _ -> false }, onDismiss = {}
+        )
       }
     }
+    compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasContentDescription("Details for Unlisted film"))
     compose.onNodeWithContentDescription("Details for Unlisted film").assertIsDisplayed().performClick()
     compose.onNodeWithText("No timed correction supplied. You can record the settings you choose.").assertIsDisplayed()
     compose.runOnIdle { assertEquals(0, selections) }

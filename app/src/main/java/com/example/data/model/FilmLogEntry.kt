@@ -30,5 +30,6 @@ data class FilmLogEntry(
   @ColumnInfo(defaultValue = "0") val calibrationEv: Float = 0f,
   @ColumnInfo(defaultValue = "''") val correctionKind: String = "",
   @ColumnInfo(defaultValue = "0") val isManual: Boolean = false,
-  @ColumnInfo(defaultValue = "1") val hasMeterReading: Boolean = true
+  @ColumnInfo(defaultValue = "1") val hasMeterReading: Boolean = true,
+  @ColumnInfo(defaultValue = "NULL") val boxIso: Int? = null
 )

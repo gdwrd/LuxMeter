@@ -343,7 +343,7 @@ class ProductFlowTest {
     val cameraA = camera(model, CameraSetup(name = "Rangefinder", maxAperture = 16.0))
     model.setFilmStock(stocks.hp5)
     model.setIso(800)
-    model.startNewRoll("Street", 24)
+    model.startNewRoll("Street", 24, pushStops = 1)
     drain()
     val rollA = model.currentRollId.value
     model.setCurrentFrame(7)
@@ -361,6 +361,7 @@ class ProductFlowTest {
     assertFalse(model.canSaveToCurrentRoll())
     assertEquals(physicalA, runBlocking { repository.getRoll(rollA) })
     model.startNewRoll("Garden", 12)
+    model.setIso(160)
     drain()
     val rollB = model.currentRollId.value
     model.setCurrentFrame(2)
@@ -478,6 +479,112 @@ class ProductFlowTest {
     assertFalse(model.currentRoll.value!!.isFinished)
     assertEquals(listOf(legacy), logs.entries.value)
     assertEquals(9, runBlocking { repository.getRoll(legacy.rollId) }!!.lastFrameNumber)
+  }
+
+  @Test fun pushUsesWorkingEiOnceAndKeepsCompensationAndReciprocitySeparate() {
+    val model = meter()
+    assertTrue(model.applyFilmSettings(stocks.hp5, 400, 0))
+    model.setApertureDirectly("f/4")
+    model.onOpticalEvMeasured(7.0)
+    val normal = model.getBaseMeteredSeconds()!!
+    assertTrue(model.applyFilmSettings(stocks.hp5, 1600, 2))
+    assertEquals(400, model.selectedFilmStock.value!!.iso)
+    assertEquals(1600, model.activeIso)
+    assertEquals(normal / 4, model.getBaseMeteredSeconds()!!, 0.000001)
+    assertEquals(0.0, model.exposureCompensation.value, 0.0)
+    model.setExposureCompensation(1.0)
+    model.setFilterStops(1.0)
+    assertEquals(normal, model.getFilteredMeteredSeconds()!!, 0.000001)
+    model.onOpticalEvMeasured(1.0)
+    val raw = model.getFilteredMeteredSeconds()!!
+    assertEquals(raw.pow(1.31), model.getCorrectedShutterSeconds()!!, 0.000001)
+    model.setMeasurementSource(MeasurementSource.SENSOR)
+    model.onSensorLuxMeasured(320f)
+    assertEquals(7.0, model.computeEv100(), 0.000001)
+    assertEquals(normal, model.getFilteredMeteredSeconds()!!, 0.000001)
+  }
+
+  @Test fun populatedRollRequiresExplicitPlanEditAndKeepsFrameSnapshots() {
+    val model = meter()
+    assertTrue(model.applyFilmSettings(stocks.hp5, 1600, 2))
+    model.recordManualExposure(8.0, 0.008)
+    drain()
+    val first = logs.entries.value.single()
+    assertEquals(400, first.boxIso)
+    assertEquals(1600, first.iso)
+    model.setFocalLength(85)
+    drain()
+    assertEquals(85, model.currentRoll.value!!.focalLengthMm)
+    val original = model.currentRoll.value!!
+    model.setCustomIso(800)
+    drain()
+    assertEquals(original, model.currentRoll.value)
+    assertEquals(2, model.pushStops.value)
+    assertTrue(model.needsFilmSettingsConfirmation(stocks.hp5, 800, 1))
+    assertFalse(model.applyFilmSettings(stocks.hp5, 800, 1))
+    assertEquals(original, model.currentRoll.value)
+    assertTrue(model.applyFilmSettings(stocks.hp5, 800, 1, confirmRollChange = true))
+    drain()
+    assertEquals(800, model.currentRoll.value!!.iso)
+    assertEquals(1, model.currentRoll.value!!.pushStops)
+    assertEquals(listOf(first), logs.entries.value)
+    assertEquals(400, model.currentRoll.value!!.boxIso)
+    model.setFilmStock(stocks.unknown)
+    drain()
+    assertFalse(model.canSaveToCurrentRoll())
+    assertEquals(1, model.currentRoll.value!!.pushStops)
+    assertEquals(800, model.currentRoll.value!!.iso)
+  }
+
+  @Test fun pushPlanSurvivesSunny16FinishRestoreAndContinueAndNewRollDefaultsToNormal() {
+    var model = meter()
+    assertTrue(model.applyFilmSettings(stocks.hp5, 1600, 2))
+    val rollId = model.currentRollId.value
+    model.applySunny16Preset("f/16", "1/2000", 1600)
+    assertEquals(2, model.pushStops.value)
+    assertEquals(1600, model.activeIso)
+    model.recordManualExposure(8.0, 0.008)
+    drain()
+    model.finishCurrentRoll()
+    drain()
+    stores.last().clear()
+    model = meter()
+    assertEquals(2, model.pushStops.value)
+    assertEquals(1600, model.activeIso)
+    assertTrue(model.currentRoll.value!!.isFinished)
+    model.startNewRoll("Normal next roll")
+    drain()
+    assertEquals(0, model.pushStops.value)
+    assertEquals(400, model.activeIso)
+    model.continueRoll(rollId)
+    drain()
+    assertEquals(2, model.pushStops.value)
+    assertEquals(1600, model.activeIso)
+    assertEquals(400, model.currentRoll.value!!.boxIso)
+    assertEquals(1, model.activeRollFrameCount.value)
+  }
+
+  @Test fun legacyWorkingIsoDoesNotInventProcessingAndPushBoundsAreValidated() {
+    application.getSharedPreferences("meter_setup", Context.MODE_PRIVATE).edit()
+      .putInt("stock_id", stocks.hp5.id).putInt("iso", 1600).commit()
+    val model = meter()
+    assertEquals(1600, model.activeIso)
+    assertNull(model.pushStops.value)
+    assertNull(model.currentRoll.value!!.pushStops)
+    for ((stops, iso) in listOf(0 to 400, 1 to 800, 2 to 1600, 4 to 6400)) {
+      assertEquals(iso, stocks.hp5.isoForPush(stops))
+    }
+    assertNull(stocks.hp5.isoForPush(-1))
+    assertNull(stocks.hp5.isoForPush(5))
+    assertNull(stocks.hp5.copy(iso = 0).isoForPush(2))
+    assertNull(stocks.hp5.copy(iso = Int.MAX_VALUE).isoForPush(4))
+    assertEquals(102400, stocks.hp5.copy(iso = 6400).isoForPush(4))
+    assertNull(stocks.hp5.copy(iso = 12800).isoForPush(4))
+    assertFalse(model.applyFilmSettings(null, 1600, 2))
+    assertFalse(model.applyFilmSettings(stocks.hp5, 1600, 5))
+    model.startNewRoll("Invalid", pushStops = 5)
+    assertEquals(1600, model.activeIso)
+    assertNull(model.pushStops.value)
   }
 
   private class Stocks : FilmStockDao {

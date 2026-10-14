@@ -63,6 +63,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.model.CameraFormat
+import com.example.data.model.processingLabel
 import com.example.sensor.DepthOfFieldCalculator
 import com.example.sensor.ExposureCalculator
 import com.example.ui.components.CameraViewfinder
@@ -97,6 +98,7 @@ fun LightMeterScreen(
   val format by viewModel.selectedFormat.collectAsStateWithLifecycle()
   val stock by viewModel.selectedFilmStock.collectAsStateWithLifecycle()
   val customIso by viewModel.customIso.collectAsStateWithLifecycle()
+  val pushStops by viewModel.pushStops.collectAsStateWithLifecycle()
   val focalLength by viewModel.focalLengthMm.collectAsStateWithLifecycle()
   val apertureIndex by viewModel.selectedApertureIndex.collectAsStateWithLifecycle()
   val shutterIndex by viewModel.selectedShutterIndex.collectAsStateWithLifecycle()
@@ -400,11 +402,12 @@ fun LightMeterScreen(
             onClick = { viewModel.setShowStockPickerSheet(true) },
             enabled = ready && !saving,
             modifier = Modifier.weight(1f).heightIn(min = 52.dp),
+            shape = MaterialTheme.shapes.large,
             contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp)
           ) {
             Column(Modifier.weight(1f)) {
               Text(stock?.name ?: "Choose film", style = MaterialTheme.typography.titleSmall)
-              Text("ISO $iso", style = MaterialTheme.typography.bodyMedium)
+              Text("EI $iso · ${processingLabel(pushStops)}", style = MaterialTheme.typography.bodyMedium)
             }
             Icon(Icons.Default.ExpandMore, contentDescription = null)
           }
@@ -501,9 +504,10 @@ fun LightMeterScreen(
       stocks = stocks,
       selectedStock = stock,
       customIso = customIso,
+      pushStops = pushStops,
       hapticManager = viewModel.hapticManager,
-      onStockSelected = viewModel::setFilmStock,
-      onCustomIsoSelected = viewModel::setCustomIso,
+      onApply = viewModel::applyFilmSettings,
+      needsConfirmation = viewModel::needsFilmSettingsConfirmation,
       onDismiss = { viewModel.setShowStockPickerSheet(false) }
     )
   }

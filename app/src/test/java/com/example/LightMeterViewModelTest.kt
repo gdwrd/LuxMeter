@@ -166,7 +166,7 @@ class LightMeterViewModelTest {
     model.setApertureDirectly("f/8")
     model.setShutterDirectly("4s")
     model.setHapticsEnabled(false)
-    model.startNewRoll("Autumn")
+    model.startNewRoll("Autumn", pushStops = 1)
     model.onOpticalEvMeasured(8.0)
     model.toggleHold()
     model.logExposure()

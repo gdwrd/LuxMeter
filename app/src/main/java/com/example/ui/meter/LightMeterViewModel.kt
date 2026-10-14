@@ -126,6 +126,12 @@ class LightMeterViewModel @JvmOverloads constructor(
   private val _customIso = MutableStateFlow<Int?>(preferences.getInt("iso", 400).coerceIn(1, 102400))
   val customIso: StateFlow<Int?> = _customIso.asStateFlow()
 
+  private val _pushStops = MutableStateFlow<Int?>(
+    if (preferences.contains("push_stops")) preferences.getInt("push_stops", -1).takeIf { it in 0..4 }
+    else if (preferences.contains("iso")) null else 0
+  )
+  val pushStops: StateFlow<Int?> = _pushStops.asStateFlow()
+
   val activeIso: Int
     get() = _customIso.value ?: _selectedFilmStock.value?.iso ?: 400
 
@@ -253,6 +259,7 @@ class LightMeterViewModel @JvmOverloads constructor(
         if (persistedRoll != null && !adoptingLegacyRoll) {
           _currentRollName.value = persistedRoll.name
           _customIso.value = persistedRoll.iso
+          _pushStops.value = persistedRoll.pushStops
           _selectedFormat.value = CameraFormat.entries.firstOrNull { it.name == persistedRoll.format } ?: _selectedFormat.value
           _focalLengthMm.value = persistedRoll.focalLengthMm
         }
@@ -284,6 +291,7 @@ class LightMeterViewModel @JvmOverloads constructor(
     preferences.edit()
       .putInt("stock_id", _selectedFilmStock.value?.id ?: -1)
       .putInt("iso", activeIso)
+      .putInt("push_stops", _pushStops.value ?: -1)
       .putString("format", _selectedFormat.value.name)
       .putInt("focal_length", _focalLengthMm.value)
       .putString("mode", _exposureMode.value.name)
@@ -317,12 +325,16 @@ class LightMeterViewModel @JvmOverloads constructor(
 
   private fun rollFromSetup(existing: FilmRoll? = null): FilmRoll {
     // A new meter setup must not relabel a roll that already contains photographs.
-    if (existing != null && existing.lastFrameNumber > 0 && !setupMatchesRoll(existing)) return existing
+    if (existing != null && (existing.isFinished || existing.lastFrameNumber > 0 && !setupMatchesRoll(existing))) return existing
+    val hasFrames = existing != null && existing.lastFrameNumber > 0
     return FilmRoll(
     id = _currentRollId.value, name = _currentRollName.value,
     filmStockId = _selectedFilmStock.value?.id,
     filmStockName = _selectedFilmStock.value?.name ?: existing?.filmStockName.orEmpty(),
-    iso = activeIso, format = _selectedFormat.value.name,
+    iso = if (hasFrames) existing!!.iso else activeIso,
+    boxIso = if (hasFrames) existing?.boxIso else _selectedFilmStock.value?.iso,
+    pushStops = if (hasFrames) existing?.pushStops else _pushStops.value,
+    format = _selectedFormat.value.name,
     cameraSetupId = _currentCameraSetup.value?.id, focalLengthMm = _focalLengthMm.value,
     frameCapacity = existing?.frameCapacity ?: _selectedFormat.value.standardFramesPerRoll,
     lastFrameNumber = _activeRollFrameCount.value, isFinished = existing?.isFinished ?: false,
@@ -586,11 +598,34 @@ class LightMeterViewModel @JvmOverloads constructor(
   }
 
   fun setFilmStock(stock: FilmStock) {
-    if (_isSaving.value || stock.iso <= 0) return
+    applyFilmSettings(stock, stock.iso, 0)
+  }
+
+  fun needsFilmSettingsConfirmation(stock: FilmStock?, iso: Int, pushStops: Int?): Boolean {
+    val roll = _currentRoll.value ?: return false
+    return !roll.isFinished && roll.lastFrameNumber > 0 && filmMatchesRoll(roll, stock) &&
+      (roll.iso != iso || roll.pushStops != pushStops)
+  }
+
+  private fun filmMatchesRoll(roll: FilmRoll, stock: FilmStock?): Boolean =
+    if (roll.filmStockId != null) roll.filmStockId == stock?.id
+    else stock == null || roll.filmStockName == stock.name
+
+  fun applyFilmSettings(stock: FilmStock?, iso: Int, pushStops: Int?, confirmRollChange: Boolean = false): Boolean {
+    if (!_setupReady.value || _isSaving.value || iso !in 1..102400 ||
+      (stock != null && stock.iso <= 0) || (pushStops != null && pushStops !in 0..4) ||
+      (pushStops != null && pushStops > 0 && stock?.isoForPush(pushStops) == null)) return false
+    if (needsFilmSettingsConfirmation(stock, iso, pushStops) && !confirmRollChange) return false
     _selectedFilmStock.value = stock
-    _customIso.value = stock.iso
+    _customIso.value = iso
+    _pushStops.value = pushStops
+    _currentRoll.value?.takeIf { !it.isFinished && filmMatchesRoll(it, stock) }?.let { roll ->
+      // Only this explicit edit may change a populated roll's processing plan.
+      _currentRoll.value = roll.copy(iso = iso, boxIso = roll.boxIso ?: stock?.iso, pushStops = pushStops)
+    }
     recalculateForMode()
     persistSetup()
+    return true
   }
 
   fun setCustomIso(iso: Int) {
@@ -770,6 +805,7 @@ class LightMeterViewModel @JvmOverloads constructor(
       frameNumber = nextFrame,
       filmStockName = stock?.name ?: roll.filmStockName.ifBlank { "Custom (ISO $activeIso)" },
       iso = activeIso,
+      boxIso = stock?.iso ?: roll.boxIso,
       format = _selectedFormat.value.displayName,
       apertureText = ExposureCalculator.formatAperture(aperture),
       shutterText = if (manual || _exposureMode.value == ExposureMode.APERTURE_PRIORITY) ExposureCalculator.formatSeconds(corrSec)
@@ -831,12 +867,17 @@ class LightMeterViewModel @JvmOverloads constructor(
     }
   }
 
-  fun startNewRoll(rollName: String, frameCapacity: Int = _selectedFormat.value.standardFramesPerRoll) {
-    if (!_setupReady.value || _isSaving.value || frameCapacity !in 1..1000 || rollName.trim().length !in 1..100) return
+  fun startNewRoll(rollName: String, frameCapacity: Int = _selectedFormat.value.standardFramesPerRoll, pushStops: Int = 0) {
+    if (!_setupReady.value || _isSaving.value || frameCapacity !in 1..1000 || rollName.trim().length !in 1..100 ||
+      pushStops !in 0..4) return
+    val iso = _selectedFilmStock.value?.isoForPush(pushStops)
+      ?: if (pushStops == 0) activeIso else return
     _currentRollId.value = UUID.randomUUID().toString()
     _currentRollName.value = rollName.trim().ifEmpty { "New roll" }
     _activeRollFrameCount.value = 0
     _savedEntry.value = null
+    _customIso.value = iso
+    _pushStops.value = pushStops
     _currentRoll.value = rollFromSetup().copy(frameCapacity = frameCapacity)
     _exposureCompensation.value = 0.0
     _filterStops.value = 0.0
@@ -860,6 +901,7 @@ class LightMeterViewModel @JvmOverloads constructor(
           applyCameraSetup(camera)
           _selectedFilmStock.value = stock
           _customIso.value = roll.iso
+          _pushStops.value = roll.pushStops
           _selectedFormat.value = CameraFormat.entries.firstOrNull { it.name == roll.format } ?: CameraFormat.FORMAT_35MM
           _focalLengthMm.value = roll.focalLengthMm.coerceIn(10, 1000)
           _currentRollId.value = roll.id

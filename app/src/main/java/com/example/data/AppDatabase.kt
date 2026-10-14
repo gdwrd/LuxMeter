@@ -21,7 +21,7 @@ import com.example.data.repository.FilmRepository
 
 @Database(
   entities = [FilmStock::class, FilmLogEntry::class, CameraSetup::class, FilmRoll::class],
-  version = 2,
+  version = 3,
   exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -108,6 +108,14 @@ abstract class AppDatabase : RoomDatabase() {
       }
     }
 
+    val MIGRATION_2_3 = object : Migration(2, 3) {
+      override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE film_rolls ADD COLUMN boxIso INTEGER DEFAULT NULL")
+        db.execSQL("ALTER TABLE film_rolls ADD COLUMN pushStops INTEGER DEFAULT NULL")
+        db.execSQL("ALTER TABLE film_log_entries ADD COLUMN boxIso INTEGER DEFAULT NULL")
+      }
+    }
+
     fun getDatabase(context: Context): AppDatabase {
       return INSTANCE ?: synchronized(this) {
         INSTANCE?.let { return@synchronized it }
@@ -116,7 +124,7 @@ abstract class AppDatabase : RoomDatabase() {
           AppDatabase::class.java,
           "luxmeter_analog.db"
         )
-        .addMigrations(MIGRATION_1_2)
+        .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
         .addCallback(DatabaseCallback())
         .build()
         INSTANCE = instance

@@ -7,11 +7,14 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.hasScrollToIndexAction
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToNode
 import androidx.lifecycle.ViewModelStore
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.dao.FilmLogDao
@@ -150,8 +153,10 @@ class SupportScreensTest {
     compose.setContent { MyApplicationTheme { LightMeterScreen(model) } }
     compose.onNodeWithText("Save frame").assertIsNotEnabled()
     compose.onNodeWithText("Portra 400").assertIsEnabled().performClick()
-    compose.onNodeWithText("Film").assertIsDisplayed()
+    compose.onNodeWithText("Film & speed").assertIsDisplayed()
+    compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText("HP5 Plus 400"))
     compose.onNodeWithText("HP5 Plus 400").performClick()
+    compose.onNodeWithText("Use for this roll").performClick()
     compose.onNodeWithText("Save frame").assertIsEnabled()
   }
 

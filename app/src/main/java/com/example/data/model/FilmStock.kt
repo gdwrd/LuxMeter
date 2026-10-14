@@ -23,6 +23,11 @@ data class FilmStock(
   val isCustom: Boolean = false,
   @ColumnInfo(defaultValue = "1") val hasReciprocityProfile: Boolean = true
 ) {
+  fun isoForPush(stops: Int): Int? {
+    if (iso <= 0 || stops !in 0..4) return null
+    return (iso.toLong() * (1L shl stops)).takeIf { it <= 102400L }?.toInt()
+  }
+
   private fun profile(): String = if (isCustom) "custom" else "$brand/$name"
 
   @get:Ignore

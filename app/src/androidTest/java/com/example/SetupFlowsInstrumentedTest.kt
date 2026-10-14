@@ -28,6 +28,7 @@ import com.example.ui.meter.LightMeterViewModel
 import com.example.ui.meter.MeasurementSource
 import com.example.ui.meter.ReadingStatus
 import com.example.ui.settings.SettingsScreen
+import com.example.ui.settings.RollsScreen
 import com.example.ui.theme.MyApplicationTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
@@ -50,6 +51,7 @@ class SetupFlowsInstrumentedTest {
   @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
   private val stores = mutableListOf<ViewModelStore>()
   private val ownedFilmNames = mutableSetOf<String>()
+  private val ownedRollIds = mutableSetOf<String>()
   private var calibrationToRestore: Pair<LightMeterViewModel, Float>? = null
   private val application: Application
     get() = ApplicationProvider.getApplicationContext()
@@ -70,6 +72,10 @@ class SetupFlowsInstrumentedTest {
           .forEach { dao.deleteFilmStockById(it.id) }
       }
     }
+    runBlocking(Dispatchers.IO) {
+      val repository = AppDatabase.getDatabase(application).repository()
+      ownedRollIds.forEach { repository.deleteRoll(it) }
+    }
   }
 
   private fun realMeter(): LightMeterViewModel {
@@ -80,6 +86,57 @@ class SetupFlowsInstrumentedTest {
     }
     compose.waitUntil(timeoutMillis = 10_000) { model.setupReady.value }
     return model
+  }
+
+  @Test
+  fun newRollStartsAtNormalUnlessPushIsExplicitlyChosen() {
+    val model = realMeter()
+    val hp5 = runBlocking(Dispatchers.IO) {
+      AppDatabase.getDatabase(application).filmStockDao().getAllFilmStocks().first().first { it.badgeStyle == "HP5" }
+    }
+    compose.runOnIdle {
+      model.startNewRoll("Push test ${UUID.randomUUID()}")
+      ownedRollIds += model.currentRollId.value
+      assertTrue(model.applyFilmSettings(hp5, 1600, 2))
+    }
+    compose.setContent { MyApplicationTheme { RollsScreen(model) } }
+    compose.onNodeWithText("Start a new roll").performClick()
+    compose.onNodeWithText("Meter at EI 400").assertExists()
+    compose.onNodeWithText("Ask the lab: Normal processing").assertExists()
+    compose.onNodeWithText("+2").performClick()
+    compose.onNodeWithText("Meter at EI 1600").assertExists()
+    compose.onNodeWithText("Ask the lab: Push +2 stops").assertExists()
+    val rollName = "Keyboard push test ${UUID.randomUUID()}"
+    val previousRollId = model.currentRollId.value
+    compose.onNodeWithText("Roll name").performScrollTo().performClick().performTextReplacement(rollName)
+    compose.waitForIdle()
+    compose.onNodeWithText("Start roll").assertIsDisplayed().performClick()
+    compose.waitUntil(timeoutMillis = 10_000) {
+      model.currentRoll.value?.let { it.id != previousRollId } == true && !model.isSaving.value
+    }
+    compose.runOnIdle {
+      ownedRollIds += model.currentRollId.value
+      assertEquals(rollName, model.currentRoll.value!!.name)
+      assertEquals(1600, model.currentRoll.value!!.iso)
+      assertEquals(2, model.currentRoll.value!!.pushStops)
+      assertEquals(400, model.currentRoll.value!!.boxIso)
+    }
+    compose.onNodeWithText("Processing requested: Push +2 stops").assertExists()
+    val portra = runBlocking(Dispatchers.IO) {
+      AppDatabase.getDatabase(application).filmStockDao().getAllFilmStocks().first().first { it.badgeStyle == "PORTRA" }
+    }
+    compose.runOnIdle { model.setCurrentFrame(1) }
+    compose.waitUntil(timeoutMillis = 10_000) { model.currentRoll.value?.lastFrameNumber == 1 && !model.isSaving.value }
+    compose.runOnIdle { model.setFilmStock(portra) }
+    compose.onNodeWithText("Edit film and processing").performClick()
+    compose.onNodeWithText("Meter at EI 1600").assertExists()
+    compose.onNodeWithText("Ask lab: Push +2 stops").assertExists()
+    compose.onNodeWithText("Use for this roll").performClick()
+    compose.runOnIdle {
+      assertEquals(hp5.id, model.selectedFilmStock.value!!.id)
+      assertEquals(2, model.currentRoll.value!!.pushStops)
+      assertEquals(1600, model.activeIso)
+    }
   }
 
   @Test
