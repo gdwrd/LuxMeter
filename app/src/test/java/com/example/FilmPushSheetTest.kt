@@ -4,7 +4,7 @@ import androidx.activity.ComponentActivity
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
-import androidx.compose.ui.test.hasScrollAction
+import androidx.compose.ui.test.hasScrollToIndexAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -65,7 +65,7 @@ class FilmPushSheetTest {
   }
 
   private fun clickInSheet(text: String) {
-    compose.onNode(hasScrollAction()).performScrollToNode(hasText(text))
+    compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText(text))
     compose.onNodeWithText(text).performClick()
   }
 
@@ -88,7 +88,7 @@ class FilmPushSheetTest {
     clickInSheet("ISO 1600")
     compose.onNodeWithText("ISO 800").performClick()
     clickInSheet("HP5 Plus 400")
-    compose.onNode(hasScrollAction()).performScrollToNode(hasText("Meter at EI 800"))
+    compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText("Meter at EI 800"))
     compose.onNodeWithText("Ask lab: Push +2 stops").assertExists()
     compose.onNodeWithText("Use for this roll").performClick()
     compose.runOnIdle { assertEquals(listOf(Applied(7, 800, 2, false)), applied) }
@@ -99,9 +99,10 @@ class FilmPushSheetTest {
     val highSpeed = film(8, "High speed film", 12800)
     val oddSpeed = film(9, "Test 125", 125)
     showSheet(listOf(highSpeed, oddSpeed), iso = 25600, pushStops = 2)
+    compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText("+4"))
     compose.onNodeWithText("+4").assertIsNotEnabled()
     clickInSheet("Test 125")
-    compose.onNode(hasScrollAction()).performScrollToNode(hasText("Meter at EI 125"))
+    compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText("Meter at EI 125"))
     compose.onNodeWithText("Ask lab: Normal processing").assertExists()
     clickInSheet("+3")
     compose.onNodeWithText("Meter at EI 1000").assertExists()

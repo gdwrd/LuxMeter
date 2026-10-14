@@ -218,6 +218,114 @@ abstract class AppDatabase : RoomDatabase() {
             reciprocityFactor = 1.33,
             description = "Ultra high-speed B&W film for low available light and moody street scenes.",
             badgeStyle = "DELTA"
+          ),
+          FilmStock(
+            name = "Portra 160", brand = "Kodak", iso = 160, type = "Color Negative",
+            reciprocityFactor = 1.0,
+            description = "Fine grain and natural skin tones for portraits in generous light.",
+            badgeStyle = "PORTRA"
+          ),
+          FilmStock(
+            name = "Portra 800", brand = "Kodak", iso = 800, type = "Color Negative",
+            reciprocityFactor = 1.0,
+            description = "High-speed color negative film with natural skin tones for available light.",
+            badgeStyle = "PORTRA"
+          ),
+          FilmStock(
+            name = "UltraMax 400", brand = "Kodak", iso = 400, type = "Color Negative",
+            reciprocityFactor = 1.0,
+            description = "Versatile everyday color with vivid saturation and broad exposure latitude.",
+            badgeStyle = "ULTRAMAX"
+          ),
+          FilmStock(
+            name = "ColorPlus 200", brand = "Kodak", iso = 200, type = "Color Negative",
+            reciprocityFactor = 1.0,
+            description = "Everyday daylight color negative film with warm tones and classic grain.",
+            badgeStyle = "COLORPLUS"
+          ),
+          FilmStock(
+            name = "Ektachrome", brand = "Kodak", iso = 100, type = "Color Slide",
+            reciprocityFactor = 1.0,
+            description = "E100 daylight-balanced slide film with fine grain and natural color.",
+            badgeStyle = "EKTACHROME"
+          ),
+          FilmStock(
+            name = "T-MAX 100", brand = "Kodak", iso = 100, type = "Black & White",
+            reciprocityFactor = 1.0, reciprocityThresholdSec = 0.1,
+            description = "Fine-grained black-and-white film with high sharpness for detailed subjects.",
+            badgeStyle = "T_MAX"
+          ),
+          FilmStock(
+            name = "T-MAX 400", brand = "Kodak", iso = 400, type = "Black & White",
+            reciprocityFactor = 1.0,
+            description = "High-speed black-and-white film with fine grain and smooth tonal separation.",
+            badgeStyle = "T_MAX"
+          ),
+          FilmStock(
+            name = "FP4 Plus", brand = "Ilford", iso = 125, type = "Black & White",
+            reciprocityFactor = 1.0,
+            description = "Classic medium-speed black-and-white film with fine grain and rich tones.",
+            badgeStyle = "FP4"
+          ),
+          FilmStock(
+            name = "Delta 100", brand = "Ilford", iso = 100, type = "Black & White",
+            reciprocityFactor = 1.0,
+            description = "Fine grain and high sharpness for detailed black-and-white photographs.",
+            badgeStyle = "DELTA"
+          ),
+          FilmStock(
+            name = "Delta 400", brand = "Ilford", iso = 400, type = "Black & White",
+            reciprocityFactor = 1.0,
+            description = "Flexible high-speed black-and-white film with refined grain and detail.",
+            badgeStyle = "DELTA"
+          ),
+          FilmStock(
+            name = "Pan F Plus", brand = "Ilford", iso = 50, type = "Black & White",
+            reciprocityFactor = 1.0,
+            description = "Slow black-and-white film with very fine grain and crisp detail.",
+            badgeStyle = "PAN_F"
+          ),
+          FilmStock(
+            name = "XP2 Super", brand = "Ilford", iso = 400, type = "Black & White",
+            reciprocityFactor = 1.0,
+            description = "Versatile black-and-white film developed in standard C-41 chemistry.",
+            badgeStyle = "XP2"
+          ),
+          FilmStock(
+            name = "Pan 100", brand = "Kentmere", iso = 100, type = "Black & White",
+            reciprocityFactor = 1.0,
+            description = "Accessible fine-grained black-and-white film for everyday daylight photography.",
+            badgeStyle = "KENTMERE"
+          ),
+          FilmStock(
+            name = "Pan 400", brand = "Kentmere", iso = 400, type = "Black & White",
+            reciprocityFactor = 1.0,
+            description = "Versatile black-and-white film for everyday scenes and available light.",
+            badgeStyle = "KENTMERE"
+          ),
+          FilmStock(
+            name = "50D", brand = "CineStill", iso = 50, type = "Color Negative",
+            reciprocityFactor = 1.0,
+            description = "Daylight-balanced cinema-derived color film with fine grain and halation.",
+            badgeStyle = "CINESTILL"
+          ),
+          FilmStock(
+            name = "400D", brand = "CineStill", iso = 400, type = "Color Negative",
+            reciprocityFactor = 1.0,
+            description = "Daylight-balanced color film with wide latitude and warm halation.",
+            badgeStyle = "CINESTILL"
+          ),
+          FilmStock(
+            name = "Fomapan 100", brand = "Foma", iso = 100, type = "Black & White",
+            reciprocityFactor = 1.0, reciprocityThresholdSec = 0.5,
+            description = "Traditional black-and-white film with fine grain and a broad tonal range.",
+            badgeStyle = "FOMAPAN"
+          ),
+          FilmStock(
+            name = "Acros II", brand = "Fujifilm", iso = 100, type = "Black & White",
+            reciprocityFactor = 1.0, reciprocityThresholdSec = 120.0,
+            description = "Fine-grained black-and-white film with excellent reciprocity characteristics.",
+            badgeStyle = "ACROS"
           )
         )
         // Repair old/empty installs before Room serves queries, without a ViewModel lifetime race.
@@ -227,6 +335,7 @@ abstract class AppDatabase : RoomDatabase() {
             val profile = ContentValues().apply {
               put("reciprocityFactor", stock.reciprocityFactor)
               put("reciprocityThresholdSec", stock.reciprocityThresholdSec)
+              put("hasReciprocityProfile", stock.hasReciprocityProfile)
             }
             val updated = db.update(
               "film_stocks", SQLiteDatabase.CONFLICT_ABORT, profile,

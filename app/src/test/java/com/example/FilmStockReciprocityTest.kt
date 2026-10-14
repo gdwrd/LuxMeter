@@ -93,4 +93,48 @@ class FilmStockReciprocityTest {
     assertTrue(velvia.rangeText.contains("magenta"))
     assertNotNull(velvia.sourceUrl)
   }
+
+  @Test fun newPresetsSupportOrdinaryMeteringWithoutInventingLongExposureCurves() {
+    val additions = listOf(
+      Triple("Kodak", "Portra 160", 1.0), Triple("Kodak", "Portra 800", 1.0),
+      Triple("Kodak", "UltraMax 400", 1.0), Triple("Kodak", "ColorPlus 200", 1.0),
+      Triple("Kodak", "Ektachrome", 10.0), Triple("Kodak", "T-MAX 100", 0.1),
+      Triple("Kodak", "T-MAX 400", 1.0), Triple("Ilford", "FP4 Plus", 1.0),
+      Triple("Ilford", "Delta 100", 1.0), Triple("Ilford", "Delta 400", 1.0),
+      Triple("Ilford", "Pan F Plus", 1.0), Triple("Ilford", "XP2 Super", 1.0),
+      Triple("Kentmere", "Pan 100", 1.0), Triple("Kentmere", "Pan 400", 1.0),
+      Triple("CineStill", "50D", 1.0), Triple("CineStill", "400D", 1.0),
+      Triple("Foma", "Fomapan 100", 0.5), Triple("Fujifilm", "Acros II", 119.0)
+    )
+    for ((brand, name, longestSupported) in additions) {
+      val stock = film(name, brand)
+      val normal = 1.0 / 125.0
+      assertEquals("$brand $name", normal, stock.calculateCorrectedExposure(normal)!!, 0.0)
+      assertEquals("$brand $name", normal, stock.calculateMeteredExposure(normal)!!, 0.0)
+      assertEquals(longestSupported, stock.calculateCorrectedExposure(longestSupported)!!, 0.0)
+      val unsupported = if (name == "Acros II") 120.0 else longestSupported + 0.01
+      assertNull("$brand $name", stock.calculateCorrectedExposure(unsupported))
+      assertNull("$brand $name", stock.calculateMeteredExposure(unsupported))
+      assertNotNull("$brand $name", stock.reciprocityGuidance(unsupported))
+      assertNotNull("$brand $name", stock.sourceUrl)
+      assertNull(stock.calculateCorrectedExposure(0.0))
+      assertNull(stock.calculateCorrectedExposure(Double.NaN))
+    }
+    assertNull(film("T-MAX 100", "Kodak").calculateCorrectedExposure(1.0 / 2000.0))
+    assertNull(film("Fomapan 100", "Foma").calculateCorrectedExposure(1.0 / 2000.0))
+    assertEquals(119.999, film("Acros II", "Fujifilm").calculateCorrectedExposure(119.999)!!, 0.0)
+    assertTrue(film("Ektachrome", "Kodak").rangeText.contains("daylight"))
+  }
+
+  @Test fun colorPlusLabelsShortExposureAssumptionAndLinksOnlyIsoEvidence() {
+    val stock = film("ColorPlus 200", "Kodak")
+    assertEquals("Short-exposure estimate", stock.correctionLabel)
+    assertTrue(stock.rangeText.contains("assumes"))
+    assertTrue(stock.rangeText.contains("no reciprocity range"))
+    assertTrue(stock.rangeText.contains("ISO only"))
+    assertTrue(stock.sourceUrl!!.contains("Catalogue"))
+    assertNotNull(stock.reciprocityGuidance(1.0 / 125.0))
+    assertNull(stock.calculateCorrectedExposure(1.01))
+    assertTrue(stock.reciprocityGuidance(1.01)!!.contains("No timed recommendation"))
+  }
 }

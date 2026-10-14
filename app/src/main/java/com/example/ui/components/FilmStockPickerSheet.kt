@@ -1,6 +1,7 @@
 package com.example.ui.components
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -9,16 +10,24 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.AlertDialog
@@ -33,6 +42,8 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -42,8 +53,13 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.example.data.model.FilmStock
 import com.example.data.model.processingLabel
@@ -69,11 +85,24 @@ fun FilmStockPickerSheet(
   var draftIso by rememberSaveable { mutableIntStateOf(customIso ?: selectedStock?.iso ?: 400) }
   var draftPushStops by rememberSaveable { mutableStateOf(pushStops) }
   var showConfirmation by rememberSaveable { mutableStateOf(false) }
+  var query by rememberSaveable { mutableStateOf("") }
+  var filmType by rememberSaveable { mutableStateOf("All") }
+  var showAll by rememberSaveable { mutableStateOf(false) }
   val draftStock = stocks.firstOrNull { it.id == draftStockId }
     ?: selectedStock?.takeIf { it.id == draftStockId }
   val validSettings = draftIso in 1..102400 && (draftStock == null || draftStock.iso > 0) &&
     (draftPushStops?.let { it in 0..4 && (it == 0 || draftStock?.isoForPush(it) != null) } ?: true)
   val view = LocalView.current
+  val filteredStocks = stocks.filter { film ->
+    val matchesType = when (filmType) {
+      "Color" -> film.type == "Color Negative" || film.type == "Tungsten Cine"
+      "B&W" -> film.type == "Black & White"
+      "Slide" -> film.type == "Color Slide"
+      else -> true
+    }
+    matchesType && "${film.brand} ${film.name} ${film.iso}".contains(query.trim(), ignoreCase = true)
+  }
+  val visibleStocks = if (showAll) filteredStocks else filteredStocks.take(9)
 
   ModalBottomSheet(
     onDismissRequest = onDismiss,
@@ -85,15 +114,125 @@ fun FilmStockPickerSheet(
         Text("Film & speed", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.weight(1f))
         IconButton(onClick = onDismiss) { Icon(Icons.Default.Close, contentDescription = "Close film picker") }
       }
-      LazyColumn(
-        modifier = Modifier.weight(1f),
+      LazyVerticalGrid(
+        columns = GridCells.Adaptive(96.dp * LocalDensity.current.fontScale),
+        modifier = Modifier.weight(1f).selectableGroup(),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
         contentPadding = PaddingValues(vertical = 8.dp)
       ) {
-        item {
+        item(span = { GridItemSpan(maxLineSpan) }) {
+          Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("${stocks.size} film presets", style = MaterialTheme.typography.bodyMedium,
+              color = MaterialTheme.colorScheme.onSurfaceVariant)
+            TextField(
+              value = query,
+              onValueChange = { query = it; showAll = false },
+              modifier = Modifier.fillMaxWidth().semantics { contentDescription = "Search films" },
+              placeholder = { Text("Search films") },
+              leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+              trailingIcon = if (query.isNotEmpty()) ({
+                IconButton(onClick = { query = ""; showAll = false }) {
+                  Icon(Icons.Default.Close, contentDescription = "Clear film search")
+                }
+              }) else null,
+              singleLine = true,
+              shape = MaterialTheme.shapes.small,
+              colors = TextFieldDefaults.colors(
+                focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+                unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+                focusedIndicatorColor = Color.Transparent,
+                unfocusedIndicatorColor = Color.Transparent
+              )
+            )
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+              listOf("All", "Color", "B&W", "Slide").forEach { type ->
+                FilterChip(
+                  selected = filmType == type,
+                  onClick = { filmType = type; showAll = false },
+                  label = { Text(type) }
+                )
+              }
+            }
+          }
+        }
+        items(visibleStocks, key = { it.id }) { film ->
+          val selected = draftStockId == film.id
+          Column(
+            modifier = Modifier.fillMaxWidth()
+              .selectable(selected = selected, role = Role.RadioButton, onClick = {
+                hapticManager.performDialClick(view)
+                if (draftStockId != film.id) {
+                  draftStockId = film.id
+                  draftIso = film.iso
+                  draftPushStops = 0
+                }
+              })
+              .semantics {
+                contentDescription = "${film.brand} ${film.name} · ISO ${film.iso} · ${film.type} · ${film.correctionLabel}"
+              },
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+          ) {
+            Box(
+              Modifier.fillMaxWidth().height(104.dp).background(
+                if (selected) MaterialTheme.colorScheme.secondaryContainer
+                else MaterialTheme.colorScheme.surfaceContainerLow,
+                MaterialTheme.shapes.medium
+              ),
+              contentAlignment = Alignment.Center
+            ) {
+              CartoonFilmRoll(stock = film, size = 76.dp, isSelected = selected)
+              IconButton(onClick = { detailsFilmId = film.id },
+                modifier = Modifier.align(Alignment.TopEnd).size(40.dp)) {
+                Icon(Icons.Default.Info, contentDescription = "Details for ${film.name}",
+                  tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp))
+              }
+              if (selected) {
+                Icon(Icons.Default.Check, contentDescription = null,
+                  tint = MaterialTheme.colorScheme.onPrimary,
+                  modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp)
+                    .background(MaterialTheme.colorScheme.primary, CircleShape).padding(3.dp).size(12.dp))
+              }
+            }
+            Text(film.name, style = MaterialTheme.typography.labelLarge,
+              textAlign = TextAlign.Center)
+            Text("${film.brand} · ISO ${film.iso}", style = MaterialTheme.typography.bodySmall,
+              color = MaterialTheme.colorScheme.onSurfaceVariant,
+              textAlign = TextAlign.Center)
+          }
+        }
+        if (filteredStocks.size > 9) {
+          item(span = { GridItemSpan(maxLineSpan) }) {
+            TextButton(onClick = { showAll = !showAll }, modifier = Modifier.fillMaxWidth()) {
+              Text(if (showAll) "Show fewer films" else "View all ${filteredStocks.size} films")
+            }
+          }
+        }
+        if (filteredStocks.isEmpty()) {
+          item(span = { GridItemSpan(maxLineSpan) }) {
+            Text(if (stocks.isEmpty()) "Your film library is loading." else "No matching films",
+              style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+              modifier = Modifier.padding(vertical = 20.dp))
+          }
+        }
+        item(span = { GridItemSpan(maxLineSpan) }) {
           Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            HorizontalDivider()
             draftStock?.let {
-              Text("${it.name} · Box ISO ${it.iso}", style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
+              Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                  Text(if (it.name.startsWith(it.brand, ignoreCase = true)) it.name else "${it.brand} ${it.name}",
+                    style = MaterialTheme.typography.titleMedium)
+                  Text("Box ISO ${it.iso} · ${it.type}", style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                  Text(it.correctionLabel, style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                IconButton(onClick = { detailsFilmId = it.id }) {
+                  Icon(Icons.Default.Info, contentDescription = "Selected film details")
+                }
+              }
             }
             Text("Push processing", style = MaterialTheme.typography.titleMedium)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -119,7 +258,7 @@ fun FilmStockPickerSheet(
             Text("Development applies to the whole roll.", style = MaterialTheme.typography.bodyMedium,
               color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (draftStock == null) {
-              Text("Choose a film below to use push choices.", style = MaterialTheme.typography.bodyMedium)
+              Text("Choose a film to use push choices.", style = MaterialTheme.typography.bodyMedium)
             } else if (draftStock.isoForPush(4) == null) {
               Text("Some choices exceed the meter's ISO limit.", style = MaterialTheme.typography.bodyMedium)
             }
@@ -146,48 +285,7 @@ fun FilmStockPickerSheet(
             if (draftStock != null && draftIso != draftStock.iso) {
               TextButton(onClick = { draftIso = draftStock.iso }) { Text("Use box speed · ISO ${draftStock.iso}") }
             }
-            HorizontalDivider()
-            Text("Choose film", style = MaterialTheme.typography.titleMedium)
           }
-        }
-        items(stocks, key = { it.id }) { film ->
-          val selected = draftStockId == film.id
-          Row(
-            modifier = Modifier.fillMaxWidth()
-              .selectable(
-                selected = selected,
-                role = Role.RadioButton,
-                onClick = {
-                  hapticManager.performDialClick(view)
-                  if (draftStockId != film.id) {
-                    draftStockId = film.id
-                    draftIso = film.iso
-                    draftPushStops = 0
-                  }
-                }
-              )
-              .padding(vertical = 14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(16.dp)
-          ) {
-            CartoonFilmRoll(stock = film, size = 40.dp)
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-              Text(film.name, style = MaterialTheme.typography.titleMedium)
-              Text(
-                film.brand + " · ISO " + film.iso + " · " + film.type,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-              )
-              Text(film.correctionLabel, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            if (selected) Icon(Icons.Default.Check, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-            IconButton(onClick = { detailsFilmId = film.id }) {
-              Icon(Icons.Default.Info, contentDescription = "Details for ${film.name}")
-            }
-          }
-        }
-        if (stocks.isEmpty()) {
-          item { Text("Your film library is loading.", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(vertical = 20.dp)) }
         }
       }
       Button(
@@ -196,7 +294,7 @@ fun FilmStockPickerSheet(
           if (needsConfirmation(draftStock, draftIso, draftPushStops)) showConfirmation = true
           else if (onApply(draftStock, draftIso, draftPushStops, false)) onDismiss()
         },
-        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
+        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp).heightIn(min = 54.dp)
       ) { Text("Use for this roll") }
     }
   }

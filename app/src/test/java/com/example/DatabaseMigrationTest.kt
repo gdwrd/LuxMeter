@@ -94,7 +94,7 @@ class DatabaseMigrationTest {
     val database = open()
     val repository = database.repository()
     assertEquals(3, database.openHelper.readableDatabase.version)
-    assertEquals(9, repository.allFilmStocks.first().size)
+    assertEquals(27, repository.allFilmStocks.first().size)
     assertTrue(repository.allLogEntries.first().isEmpty())
     assertTrue(repository.allRolls.first().isEmpty())
     assertTrue(repository.allCameraSetups.first().isEmpty())

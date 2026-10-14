@@ -40,7 +40,11 @@ Calibration stays on the device and is excluded from backup and transfer. The ol
 
 ## Film correction limits
 
-HP5 and Delta 3200 use [Ilford's published powers](https://www.ilfordphoto.com/wp/wp-content/uploads/2024/05/Reciprocity-Failure-Compensation-v2.pdf). Tri-X uses [Kodak's published timed points](https://www.kodakprofessional.com/sites/default/files/wysiwyg/pro/resources/f4017_TriX.pdf), with estimated interpolation and a development-adjustment reminder. CineStill uses its approximate power of 1.3 and explicitly asks you to bracket.
+The film picker includes 27 built-in presets with dimensional canister artwork in the app's light and dark themes. Search by film, brand or speed, filter color, black-and-white or slide film, and expand the grid to browse the complete library. Custom films remain available alongside the presets.
+
+HP5 and Delta 3200 use [Ilford's published powers](https://www.ilfordphoto.com/wp/wp-content/uploads/2024/05/Reciprocity-Failure-Compensation-v2.pdf). Tri-X uses [Kodak's published timed points](https://www.kodakprofessional.com/sites/default/files/wysiwyg/pro/resources/f4017_TriX.pdf), with estimated interpolation and a development-adjustment reminder. CineStill 800T uses its approximate power of 1.3 and explicitly asks you to bracket.
+
+The additional presets support their stated ordinary-exposure ranges without inventing longer correction curves; **Film details** shows each limit and source. ColorPlus 200 is explicitly labelled **Short-exposure estimate**: it assumes ordinary exposure through one second because no manufacturer reciprocity range is supplied. Its linked catalogue establishes ISO, not a validated correction range.
 
 Kodak color films have no manufacturer-supplied timed correction beyond their stated normal range. Superia and Velvia publish aperture corrections, and Velvia also needs color filtration. Outside a supported timed range, the app shows the metered value and guidance, suppresses the corrected recommendation, and disables timing and saving that recommendation. You can explicitly record a manually chosen exposure instead. Corrected exposures and the foreground timer are limited to one day.
 
