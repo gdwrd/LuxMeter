@@ -113,6 +113,16 @@ class ProductFlowTest {
     assertEquals(320, model.currentRoll.value!!.iso)
   }
 
+  @Test fun aCustomEiChosenAfterAPushCarriesToTheNextRoll() {
+    val model = meter()
+    assertTrue(model.applyFilmSettings(stocks.hp5, 1600, 2))
+    model.setIso(1250)
+    model.startNewRoll("Next roll")
+    drain()
+    assertEquals(0, model.pushStops.value)
+    assertEquals(1250, model.activeIso)
+  }
+
   @Test fun positiveCompensationAddsExposureAndFiltersAreAppliedBeforeFilmCorrection() {
     val model = meter()
     model.setIso(100)

@@ -1070,8 +1070,10 @@ class LightMeterViewModel @JvmOverloads constructor(
   fun startNewRoll(rollName: String, frameCapacity: Int = _selectedFormat.value.standardFramesPerRoll, pushStops: Int = 0) {
     if (!_setupReady.value || _isSaving.value || frameCapacity !in 1..1000 || rollName.trim().length !in 1..100 ||
       pushStops !in 0..4) return
-    // A hand-set EI carries over to an unpushed roll; a pushed EI belongs to that roll's development, so reset it.
-    val keepChosenEi = pushStops == 0 && (_pushStops.value ?: 0) == 0
+    // A chosen EI carries over to an unpushed roll; an unchanged push-derived EI belongs to the old roll's development.
+    val previousPush = _pushStops.value ?: 0
+    val pushDerivedEi = previousPush > 0 && activeIso == _selectedFilmStock.value?.isoForPush(previousPush)
+    val keepChosenEi = pushStops == 0 && !pushDerivedEi
     val iso = if (keepChosenEi) activeIso else _selectedFilmStock.value?.isoForPush(pushStops)
       ?: if (pushStops == 0) activeIso else return
     _currentRollId.value = UUID.randomUUID().toString()
