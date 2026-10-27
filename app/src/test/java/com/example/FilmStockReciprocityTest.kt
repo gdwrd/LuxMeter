@@ -67,7 +67,11 @@ class FilmStockReciprocityTest {
     assertNull(custom.copy(reciprocityFactor = Double.NaN).calculateCorrectedExposure(1.0))
     assertNull(custom.copy(reciprocityFactor = 0.5).calculateMeteredExposure(4.0))
     val delayed = custom.copy(reciprocityFactor = 2.0, reciprocityThresholdSec = 2.0)
-    assertNull(delayed.calculateMeteredExposure(4.0))
+    // The correction starts from the threshold, so it has no jump there and every actual time maps back.
+    assertEquals(2.0, delayed.calculateCorrectedExposure(2.0)!!, 0.000001)
+    assertEquals(2.0, delayed.calculateCorrectedExposure(2.000001)!!, 0.0001)
+    assertEquals(4.5, delayed.calculateCorrectedExposure(3.0)!!, 0.000001)
+    assertEquals(2.0 * kotlin.math.sqrt(2.0), delayed.calculateMeteredExposure(4.0)!!, 0.000001)
     assertEquals(5.0, delayed.calculateCorrectedExposure(delayed.calculateMeteredExposure(5.0)!!)!!, 0.000001)
   }
 
@@ -95,16 +99,31 @@ class FilmStockReciprocityTest {
     assertNotNull(velvia.sourceUrl)
   }
 
+  @Test fun ilfordFilmsUseTheFactorsFromTheLinkedSheet() {
+    val factors = listOf(
+      Triple("Ilford", "Pan F Plus", 1.33), Triple("Ilford", "FP4 Plus", 1.26),
+      Triple("Ilford", "Delta 100", 1.26), Triple("Ilford", "Delta 400", 1.41),
+      Triple("Ilford", "XP2 Super", 1.31), Triple("Kentmere", "Pan 100", 1.26),
+      Triple("Kentmere", "Pan 400", 1.30)
+    )
+    for ((brand, name, factor) in factors) {
+      val stock = film(name, brand)
+      assertEquals("$brand $name", 1.0 / 125.0, stock.calculateCorrectedExposure(1.0 / 125.0)!!, 0.0)
+      assertEquals("$brand $name", 1.0, stock.calculateCorrectedExposure(1.0)!!, 0.0)
+      assertEquals("$brand $name", Math.pow(10.0, factor), stock.calculateCorrectedExposure(10.0)!!, 0.000001)
+      assertEquals("$brand $name", 10.0, stock.calculateMeteredExposure(Math.pow(10.0, factor))!!, 0.000001)
+      assertNull("$brand $name", stock.reciprocityGuidance(10.0))
+      assertEquals("$brand $name", "Manufacturer guidance", stock.correctionLabel)
+      assertTrue("$brand $name", stock.rangeText.contains("power correction above 1s"))
+    }
+  }
+
   @Test fun newPresetsSupportOrdinaryMeteringWithoutInventingLongExposureCurves() {
     val additions = listOf(
       Triple("Kodak", "Portra 160", 1.0), Triple("Kodak", "Portra 800", 1.0),
       Triple("Kodak", "UltraMax 400", 1.0), Triple("Kodak", "ColorPlus 200", 1.0),
       Triple("Kodak", "Ektachrome", 10.0), Triple("Kodak", "T-MAX 100", 0.1),
-      Triple("Kodak", "T-MAX 400", 1.0), Triple("Ilford", "FP4 Plus", 1.0),
-      Triple("Ilford", "Delta 100", 1.0), Triple("Ilford", "Delta 400", 1.0),
-      Triple("Ilford", "Pan F Plus", 1.0), Triple("Ilford", "XP2 Super", 1.0),
-      Triple("Kentmere", "Pan 100", 1.0), Triple("Kentmere", "Pan 400", 1.0),
-      Triple("CineStill", "50D", 1.0), Triple("CineStill", "400D", 1.0),
+      Triple("Kodak", "T-MAX 400", 1.0), Triple("CineStill", "50D", 1.0), Triple("CineStill", "400D", 1.0),
       Triple("Foma", "Fomapan 100", 0.5), Triple("Fujifilm", "Acros II", 119.0)
     )
     for ((brand, name, longestSupported) in additions) {

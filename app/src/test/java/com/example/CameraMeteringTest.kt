@@ -184,4 +184,59 @@ class CameraMeteringTest {
     assertNull(CameraMetering.framingZoom(50.0, floatArrayOf(), 6f, 4f, 1.5f, 0))
     assertNull(CameraMetering.framingZoom(50.0, null, 6f, 4f, 1.5f, 0))
   }
+
+  @Test
+  fun `readings at both the exposure and sensitivity limits are too dark to trust`() {
+    val longest = CameraMetering.longestPreviewExposureNs(500_000_000L, 15)!!
+    assertEquals(66_666_666L, longest)
+    assertTrue(CameraMetering.isAtLowLightLimit(66_000_000L, 3200, longest, 3200))
+    assertFalse(CameraMetering.isAtLowLightLimit(66_000_000L, 800, longest, 3200))
+    assertFalse(CameraMetering.isAtLowLightLimit(8_000_000L, 3200, longest, 3200))
+    assertFalse(CameraMetering.isAtLowLightLimit(66_000_000L, 3200, null, 3200))
+    assertFalse(CameraMetering.isAtLowLightLimit(null, 3200, longest, 3200))
+    assertEquals(100_000_000L, CameraMetering.longestPreviewExposureNs(100_000_000L, 7))
+    assertEquals(33_333_333L, CameraMetering.longestPreviewExposureNs(null, 30))
+    assertNull(CameraMetering.longestPreviewExposureNs(null, null))
+  }
+
+  @Test
+  fun `the slowest frame-rate range keeps the fastest upper bound`() {
+    assertEquals(7 to 30, CameraMetering.slowestFpsRange(listOf(15 to 30, 7 to 15, 7 to 30, 30 to 30)))
+    assertEquals(15 to 30, CameraMetering.slowestFpsRange(listOf(5 to 5, 15 to 30)))
+    assertEquals(5 to 10, CameraMetering.slowestFpsRange(listOf(5 to 10, 10 to 15)))
+    assertNull(CameraMetering.slowestFpsRange(emptyList()))
+  }
+
+  @Test
+  fun `a dark metered image at the exposure limit is rejected even below the advertised gain ceiling`() {
+    // Pixel 9 Pro Fold with every rear lens covered: AE converged at 1/15 s, ISO 1067 with 6x boost.
+    val longest = CameraMetering.longestPreviewExposureNs(null, 15)!!
+    assertTrue(CameraMetering.isAtLowLightLimit(66_658_410L, 1067, longest, 17066, regionLuma = 18f))
+    assertFalse(CameraMetering.isAtLowLightLimit(66_658_410L, 1067, longest, 17066, regionLuma = 110f))
+    assertFalse(CameraMetering.isAtLowLightLimit(66_658_410L, 1067, longest, 17066, regionLuma = null))
+    assertFalse(CameraMetering.isAtLowLightLimit(8_000_000L, 1067, longest, 17066, regionLuma = 18f))
+  }
+
+  @Test
+  fun `display areas map into a rotated analysis buffer`() {
+    val crop = Rect(0, 0, 640, 480)
+    val area = RectF(0f, 0f, 0.25f, 0.5f)
+    assertEquals(Rect(0, 0, 160, 240), CameraMetering.analysisRect(crop, 0, area))
+    // Shown rotated 90 degrees clockwise, the display's top-left is the buffer's bottom-left.
+    assertEquals(Rect(0, 360, 320, 480), CameraMetering.analysisRect(crop, 90, area))
+    assertEquals(Rect(480, 240, 640, 480), CameraMetering.analysisRect(crop, 180, area))
+    assertEquals(Rect(320, 0, 640, 120), CameraMetering.analysisRect(crop, 270, area))
+    assertEquals(crop, CameraMetering.analysisRect(crop, 90, null))
+    assertNull(CameraMetering.analysisRect(Rect(), 0, area))
+  }
+
+  @Test
+  fun `mean luma samples only the requested area`() {
+    val width = 8
+    val pixels = ByteArray(width * 8) { index -> if (index % width < 4) 200.toByte() else 10.toByte() }
+    val buffer = java.nio.ByteBuffer.wrap(pixels)
+    assertEquals(200f, CameraMetering.meanLuma(buffer, width, 1, Rect(0, 0, 4, 8), step = 1)!!, 0.001f)
+    assertEquals(105f, CameraMetering.meanLuma(buffer, width, 1, Rect(0, 0, 8, 8), step = 1)!!, 0.001f)
+    assertNull(CameraMetering.meanLuma(buffer, width, 1, Rect(0, 0, 9, 9), step = 1))
+  }
 }

@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Rect
+import android.graphics.RectF
 import android.hardware.camera2.CameraCaptureSession
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CaptureRequest
@@ -15,6 +16,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.SystemClock
 import android.provider.Settings
+import android.util.Range
 import android.view.Surface
 import android.view.View
 import android.view.ViewOutlineProvider
@@ -28,6 +30,7 @@ import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.DynamicRange
+import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.Preview
 import androidx.camera.core.UseCaseGroup
 import androidx.camera.lifecycle.ProcessCameraProvider
@@ -93,7 +96,9 @@ import com.example.sensor.CameraMetering
 import com.example.sensor.DepthOfFieldCalculator
 import com.example.sensor.HapticManager
 import kotlinx.coroutines.delay
+import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 
 private class HeldCameraFrame : ViewModel() {
   var bitmap by mutableStateOf<Bitmap?>(null)
@@ -226,6 +231,13 @@ fun CameraViewfinder(
     var zoomReady = false
     var supportsFrameMetering = false
     var activeArray: Rect? = null
+    var longestExposureNs: Long? = null
+    var maxSensitivity: Int? = null
+    var analysis: ImageAnalysis? = null
+    // Brightness of the metered area, measured off the main thread: (mean luma, elapsedRealtime ms).
+    val regionLuma = AtomicReference<Pair<Float, Long>?>(null)
+    val analysisArea = AtomicReference<RectF?>(null)
+    val analysisExecutor = Executors.newSingleThreadExecutor()
     var watchdog: Runnable? = null
 
     fun unavailable(message: String) {
@@ -270,6 +282,16 @@ fun CameraViewfinder(
                   .setCaptureRequestOption(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, 0)
                   .setCaptureRequestOption(CaptureRequest.CONTROL_AE_LOCK, false)
                   .setCaptureRequestOption(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE, CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_OFF)
+                // A slower minimum frame rate lets auto-exposure hold the shutter open longer in dim light.
+                val fpsRange = CameraMetering.slowestFpsRange(
+                  cameraInfo.getCameraCharacteristic(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)
+                    ?.map { it.lower to it.upper }.orEmpty())
+                if (fpsRange != null) {
+                  interop.setCaptureRequestOption(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, Range(fpsRange.first, fpsRange.second))
+                }
+                longestExposureNs = CameraMetering.longestPreviewExposureNs(
+                  cameraInfo.getCameraCharacteristic(CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE)?.upper, fpsRange?.first)
+                maxSensitivity = cameraInfo.getCameraCharacteristic(CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE)?.upper
                 if (cameraInfo.getCameraCharacteristic(CameraCharacteristics.CONTROL_AVAILABLE_SCENE_MODES)
                     ?.contains(CaptureRequest.CONTROL_SCENE_MODE_DISABLED) == true) {
                   interop.setCaptureRequestOption(CaptureRequest.CONTROL_SCENE_MODE, CaptureRequest.CONTROL_SCENE_MODE_DISABLED)
@@ -309,6 +331,7 @@ fun CameraViewfinder(
                           val transform = previewView.sensorToViewTransform
                           val crop = result.get(CaptureResult.SCALER_CROP_REGION)
                           val area = selectedX?.let { CameraMetering.selectedAreaAt(it, selectedY) }
+                          analysisArea.set(area)
                           val measuringLabel = if (area == null) "Measuring frame" else "Measuring selected area"
                           val region = if (sensor != null && transform != null && crop != null) {
                             CameraMetering.frameRegion(previewView.width, previewView.height, transform, sensor, crop, area)
@@ -360,6 +383,11 @@ fun CameraViewfinder(
                                 measuring = true
                                 canRetry = unsettledMs > 5000L
                               }
+                              CameraMetering.isAtLowLightLimit(result.get(CaptureResult.SENSOR_EXPOSURE_TIME),
+                                result.get(CaptureResult.SENSOR_SENSITIVITY), longestExposureNs, maxSensitivity,
+                                regionLuma.get()?.takeIf { now - it.second <= 1000L }?.first) ->
+                                // At its limits the camera reports settings brighter than the scene; never meter from them.
+                                unavailable("Too dark for the phone camera. Use the light sensor or Sunny 16.")
                               else -> {
                                 val boost = result.get(CaptureResult.CONTROL_POST_RAW_SENSITIVITY_BOOST) ?: 100
                                 val ev = CameraMetering.ev100(
@@ -393,8 +421,26 @@ fun CameraViewfinder(
                 if (viewport == null) {
                   unavailable("Camera preview unavailable")
                 } else {
-                  val group = UseCaseGroup.Builder().setViewPort(viewport).addUseCase(useCase).build()
-                  val activeCamera = cameraProvider.bindToLifecycle(lifecycleOwner, selector, group)
+                  val luma = ImageAnalysis.Builder().setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST).build()
+                  luma.setAnalyzer(analysisExecutor) { image ->
+                    image.use {
+                      val plane = it.planes.firstOrNull()
+                      val rect = CameraMetering.analysisRect(it.cropRect, it.imageInfo.rotationDegrees, analysisArea.get())
+                      val mean = if (plane != null && rect != null)
+                        CameraMetering.meanLuma(plane.buffer, plane.rowStride, plane.pixelStride, rect) else null
+                      regionLuma.set(mean?.let { value -> value to SystemClock.elapsedRealtime() })
+                    }
+                  }
+                  // The brightness check is an extra guard; phones that cannot add the stream still meter without it.
+                  val activeCamera = try {
+                    cameraProvider.bindToLifecycle(lifecycleOwner, selector,
+                      UseCaseGroup.Builder().setViewPort(viewport).addUseCase(useCase).addUseCase(luma).build())
+                      .also { analysis = luma }
+                  } catch (_: IllegalArgumentException) {
+                    cameraProvider.unbind(luma)
+                    cameraProvider.bindToLifecycle(lifecycleOwner, selector,
+                      UseCaseGroup.Builder().setViewPort(viewport).addUseCase(useCase).build())
+                  }
                   camera = activeCamera
                   val physicalSize = cameraInfo.getCameraCharacteristic(CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE)
                   val phoneFocals = cameraInfo.getCameraCharacteristic(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)
@@ -451,6 +497,8 @@ fun CameraViewfinder(
       watchdog?.let { previewView.removeCallbacks(it) }
       camera?.let { Camera2CameraControl.from(it.cameraControl).clearCaptureRequestOptions() }
       preview?.let { provider?.unbind(it) }
+      analysis?.let { provider?.unbind(it); it.clearAnalyzer() }
+      analysisExecutor.shutdown()
     }
   }
 
