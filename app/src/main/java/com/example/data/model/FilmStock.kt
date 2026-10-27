@@ -102,7 +102,9 @@ data class FilmStock(
       !hasReciprocityProfile -> "No timed correction supplied. You can record the settings you choose."
       isCustom -> "Your t^$reciprocityFactor correction above ${reciprocityThresholdSec}s; the app limits timing to one day."
       else -> when (profile()) {
-        "Ilford/HP5 Plus 400", "Ilford/Delta 3200", "Ilford/SFX 200", "Ilford/Ortho Plus" ->
+        "Ilford/HP5 Plus 400", "Ilford/Delta 3200", "Ilford/SFX 200", "Ilford/Ortho Plus",
+        "Ilford/FP4 Plus", "Ilford/Delta 100", "Ilford/Delta 400", "Ilford/Pan F Plus", "Ilford/XP2 Super",
+        "Kentmere/Pan 100", "Kentmere/Pan 400" ->
           "No correction through 1s; manufacturer's power correction above 1s. App limit: one day."
         "Kentmere/Pan 200", "Harman/Phoenix II 200", "Harman/Switch Azure 125" ->
           "No correction from 1/10,000s to 1s; manufacturer's power correction above 1s. App limit: one day."
@@ -114,8 +116,6 @@ data class FilmStock(
         "Kodak/Ektachrome" -> "No correction from 1/10,000s to 10s in daylight with normal processing. Longer exposures need color-filter guidance."
         "Kodak/T-MAX 100" -> "No correction from 1/1000s to 1/10s, between Kodak's published table points. Other exposures need its exposure and development table; longer timed correction is not included."
         "Kodak/T-MAX 400" -> "No correction from 1/10,000s to 1s, between Kodak's published table points. Longer timed correction is not included; check its exposure and development table."
-        "Ilford/FP4 Plus", "Ilford/Delta 100", "Ilford/Delta 400", "Ilford/Pan F Plus", "Ilford/XP2 Super",
-        "Kentmere/Pan 100", "Kentmere/Pan 400" -> "No correction through 1s. Longer timed correction is not included; consult the manufacturer's guidance."
         "CineStill/50D", "CineStill/400D" -> "Ordinary exposure through 1s, following CineStill's short-exposure guidance. Longer timed correction is not included; bracket and test exposures."
         "Foma/Fomapan 100", "Foma/Fomapan 200", "Foma/Fomapan 400", "Foma/Retropan 320", "Foma/Ortho 400" ->
           "No correction from 1/1000s to 1/2s. Longer timed correction is not included; check Foma's exposure table."
@@ -142,6 +142,11 @@ data class FilmStock(
       "Ilford/Delta 3200" -> powerExposure(seconds, inverse, 1.33)
       "Ilford/SFX 200" -> powerExposure(seconds, inverse, 1.43)
       "Ilford/Ortho Plus" -> powerExposure(seconds, inverse, 1.25)
+      "Ilford/Pan F Plus" -> powerExposure(seconds, inverse, 1.33)
+      "Ilford/FP4 Plus", "Ilford/Delta 100", "Kentmere/Pan 100" -> powerExposure(seconds, inverse, 1.26)
+      "Ilford/Delta 400" -> powerExposure(seconds, inverse, 1.41)
+      "Ilford/XP2 Super" -> powerExposure(seconds, inverse, 1.31)
+      "Kentmere/Pan 400" -> powerExposure(seconds, inverse, 1.30)
       "Kentmere/Pan 200" -> if (seconds >= 0.0001) powerExposure(seconds, inverse, 1.26) else null
       "Harman/Phoenix II 200", "Harman/Switch Azure 125" ->
         if (seconds >= 0.0001) powerExposure(seconds, inverse, 1.31) else null
@@ -153,8 +158,7 @@ data class FilmStock(
       "Kodak/ColorPlus 200" -> seconds.takeIf { it <= 1.0 }
       "Kodak/Ektachrome" -> seconds.takeIf { it in 0.0001..10.0 }
       "Kodak/T-MAX 100" -> seconds.takeIf { it in 0.001..0.1 }
-      "Ilford/FP4 Plus", "Ilford/Delta 100", "Ilford/Delta 400", "Ilford/Pan F Plus", "Ilford/XP2 Super",
-      "Kentmere/Pan 100", "Kentmere/Pan 400", "CineStill/50D", "CineStill/400D" -> seconds.takeIf { it <= 1.0 }
+      "CineStill/50D", "CineStill/400D" -> seconds.takeIf { it <= 1.0 }
       "Foma/Fomapan 100", "Foma/Fomapan 200", "Foma/Fomapan 400", "Foma/Retropan 320", "Foma/Ortho 400" ->
         seconds.takeIf { it in 0.001..0.5 }
       "Fujifilm/Acros II" -> seconds.takeIf { it < 120.0 }
@@ -202,8 +206,8 @@ data class FilmStock(
   private fun powerExposure(seconds: Double, inverse: Boolean, factor: Double, threshold: Double = 1.0): Double? {
     if (!factor.isFinite() || factor < 1.0 || !threshold.isFinite() || threshold < 1.0) return null
     if (seconds <= threshold) return seconds
-    return seconds.pow(if (inverse) 1.0 / factor else factor)
-      .takeIf { !inverse || it > threshold }
+    // Scale from the threshold so the correction is continuous where it begins: Tc = T * (Tm / T)^P.
+    return threshold * (seconds / threshold).pow(if (inverse) 1.0 / factor else factor)
   }
 
   private fun triXExposure(seconds: Double, inverse: Boolean): Double? {

@@ -136,6 +136,8 @@ fun LightMeterScreen(
 
   val iso = customIso ?: stock?.iso ?: 400
   val held = status == ReadingStatus.HELD
+  // While the camera re-meters, the last value belongs to the previous scene; show no exposure from it.
+  val readingCurrent = hasReading && status != ReadingStatus.WAITING
   val apertureLabels = viewModel.apertureLabels
   val shutterLabels = viewModel.shutterLabels
   val aperture = viewModel.availableApertures[apertureIndex]
@@ -149,12 +151,13 @@ fun LightMeterScreen(
     viewModel.availableShutterSeconds.none { abs(it - correctedSeconds) < 1e-6 }
   val ev100 = if (measuredEv != null) viewModel.computeEv100() else Double.NaN
   val evDelta = viewModel.getEvDelta()
+  val dialTolerance = viewModel.exposureToleranceStops()
   val exposureGuidance = viewModel.getExposureGuidance()
   val rollGuidance = viewModel.getCurrentRollGuidance()
   val canSaveRoll = viewModel.canSaveToCurrentRoll()
   val adjustmentsActive = abs(compensation) > 0.0001 || filterStops > 0.0001
   val showMeteredOnly = mode == ExposureMode.APERTURE_PRIORITY && rawSeconds != null && correctedSeconds == null &&
-    stock?.hasReciprocityProfile == false && evDelta != null && abs(evDelta) <= 0.6
+    stock?.hasReciprocityProfile == false && evDelta != null && abs(evDelta) <= dialTolerance
 
   DisposableEffect(lifecycleOwner, viewModel) {
     val observer = LifecycleEventObserver { _, event ->
@@ -272,7 +275,7 @@ fun LightMeterScreen(
         shutterLabel = if (showMeteredOnly) ExposureCalculator.formatSeconds(rawSeconds!!)
           else if (mode == ExposureMode.APERTURE_PRIORITY) correctedSeconds?.let(ExposureCalculator::formatSeconds) ?: "—"
           else ExposureCalculator.formatSeconds(selectedSeconds),
-        available = hasReading && (exposureSupported || showMeteredOnly),
+        available = readingCurrent && (exposureSupported || showMeteredOnly),
         ev100 = ev100,
         evDelta = evDelta ?: 0.0,
         enabled = !saving,
@@ -303,7 +306,7 @@ fun LightMeterScreen(
           "Compensation ${formatCompensation(compensation)} · filter ${formatExposureInput(filterStops)} stops",
           style = MaterialTheme.typography.bodyMedium
         )
-        if (hasReading && mode == ExposureMode.APERTURE_PRIORITY) {
+        if (readingCurrent && mode == ExposureMode.APERTURE_PRIORITY) {
           Text(
             "Scene ${sceneSeconds?.let(ExposureCalculator::formatSeconds) ?: "—"} · after adjustments ${adjustedSeconds?.let(ExposureCalculator::formatSeconds) ?: "—"} · film exposure ${correctedSeconds?.let(ExposureCalculator::formatSeconds) ?: "unavailable"}",
             style = MaterialTheme.typography.bodyMedium,
@@ -312,23 +315,23 @@ fun LightMeterScreen(
         }
       }
 
-      if (hasReading && mode != ExposureMode.MANUAL_MATCH && evDelta != null && abs(evDelta) > 0.6) {
-        Text("Outside the available exposure range. Choose another aperture or shutter speed.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
-      }
-      if (hasReading && exposureSupported && mode != ExposureMode.MANUAL_MATCH && evDelta != null && abs(evDelta) in 0.15..0.6) {
+      if (readingCurrent && exposureSupported && mode != ExposureMode.MANUAL_MATCH && evDelta != null && abs(evDelta) >= 0.15 && abs(evDelta) <= dialTolerance) {
         Text("Closest dial setting · ${exposureBalanceLabel(evDelta)} target", style = MaterialTheme.typography.bodyMedium,
           color = MaterialTheme.colorScheme.onSurfaceVariant)
       }
-      if (hasReading && !exposureSupported && mode == ExposureMode.APERTURE_PRIORITY && adjustedSeconds != null) {
+      if (readingCurrent && !exposureSupported && mode == ExposureMode.APERTURE_PRIORITY && adjustedSeconds != null) {
         Text("Metered target ${ExposureCalculator.formatSeconds(adjustedSeconds)} · recommendation unavailable", style = MaterialTheme.typography.bodyMedium)
       }
-      if (hasReading && exposureGuidance != null) {
-        Text(exposureGuidance, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+      if (readingCurrent && exposureGuidance != null) {
+        // The guidance carries the out-of-range warning, so it uses the error colour then.
+        Text(exposureGuidance, style = MaterialTheme.typography.bodyMedium,
+          color = if (mode != ExposureMode.MANUAL_MATCH && evDelta != null && abs(evDelta) > dialTolerance) MaterialTheme.colorScheme.error
+            else MaterialTheme.colorScheme.onSurfaceVariant)
       }
       if (stock != null && (exposureGuidance != null || !exposureSupported)) {
         TextButton(onClick = { showFilmDetails = true }) { Text("Film correction details") }
       }
-      if (hasReading && rawSeconds != null && correctedSeconds != null && correctedSeconds >= 1.0) {
+      if (readingCurrent && rawSeconds != null && correctedSeconds != null && correctedSeconds >= 1.0) {
         Row(
           modifier = Modifier.fillMaxWidth(),
           horizontalArrangement = Arrangement.SpaceBetween,

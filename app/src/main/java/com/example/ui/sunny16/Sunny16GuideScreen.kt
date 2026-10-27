@@ -89,7 +89,8 @@ fun Sunny16GuideScreen(
   val applyExposure: (Boolean) -> Unit = { confirmed ->
     if (viewModel.applyFilmSettings(stock, iso, pushStops, confirmed)) {
       viewModel.hapticManager.performDialClick(view)
-      viewModel.applySunny16Preset(condition.apertureLabel, shutter, iso)
+      // The rule's exact 1/ISO keeps the estimate independent of how the dial label rounds.
+      viewModel.applySunny16Preset(condition.apertureLabel, shutter, iso, ruleSeconds = 1.0 / iso)
       onApplyPreset?.invoke(condition, format, iso)
     }
   }

@@ -42,6 +42,8 @@ enum class ExposureMode(val label: String, val description: String) {
   MANUAL_MATCH("M", "Manual EV Match — align dial EV with meter needle")
 }
 
+private const val MIN_DIAL_TOLERANCE_STOPS = 0.6
+
 enum class MeasurementSource { CAMERA, SENSOR, SUNNY_16 }
 enum class ReadingStatus { WAITING, LIVE, HELD, UNAVAILABLE }
 
@@ -55,6 +57,8 @@ class LightMeterViewModel @JvmOverloads constructor(
   private val repository = repositoryOverride ?: AppDatabase.getDatabase(application).repository()
   private val photos = ShotPhotoStore(application)
   private val rollWrites = Mutex()
+  // Latest unsaved setup per roll; a burst of dial changes shares one queued database write.
+  private val pendingRollSetups = mutableMapOf<String, FilmRoll>()
   val sensorManager = LightSensorManager(application)
   val hapticManager = HapticManager(application)
   private var meteringActive = true
@@ -328,10 +332,14 @@ class LightMeterViewModel @JvmOverloads constructor(
       .apply()
     val roll = _currentRoll.value?.let { current -> rollFromSetup(current) } ?: return
     _currentRoll.value = roll
+    val alreadyQueued = pendingRollSetups.containsKey(roll.id)
+    pendingRollSetups[roll.id] = roll
+    if (alreadyQueued) return
     viewModelScope.launch {
       try {
         rollWrites.withLock {
-          val latest = _currentRoll.value?.takeIf { it.id == roll.id } ?: roll
+          val snapshot = pendingRollSetups.remove(roll.id) ?: return@withLock
+          val latest = _currentRoll.value?.takeIf { it.id == roll.id } ?: snapshot
           repository.saveRoll(latest)
         }
       } catch (error: Exception) {
@@ -407,7 +415,7 @@ class LightMeterViewModel @JvmOverloads constructor(
       sensorManager.isLocked.value || !ev100.isFinite()) return
     rawEv100.value = ev100
     _hasReading.value = true
-    sensorManager.setManualLux(measuredLux ?: (2.5 * Math.pow(2.0, ev100)).toFloat())
+    measuredLux?.let(sensorManager::setManualLux)
     recalculateForMode()
     _readingMessage.value = null
     _readingStatus.value = ReadingStatus.LIVE
@@ -521,10 +529,32 @@ class LightMeterViewModel @JvmOverloads constructor(
       val desired = (if (stock == null) target else stock.calculateCorrectedExposure(target)) ?: return null
       if (_currentCameraSetup.value?.allowsBulb != false && desired >= 1.0) desired else selected
     } else selected
-    if (_exposureMode.value != ExposureMode.MANUAL_MATCH &&
-      getEvDelta()?.let { abs(it) > 0.6 } == true) return null
+    if (_exposureMode.value != ExposureMode.MANUAL_MATCH && !isWithinDialTolerance()) return null
     return actual
   }
+
+  /** Accepts rounding up to half the gap to the next dial value toward the target, and never less than 0.6 stop. */
+  private fun dialToleranceStops(delta: Double): Double {
+    val gap = when (_exposureMode.value) {
+      ExposureMode.APERTURE_PRIORITY -> {
+        // A positive delta means too little exposure: the target lies toward a longer shutter.
+        val values = availableShutterSeconds
+        val index = _selectedShutterIndex.value
+        values.getOrNull(if (delta > 0) index + 1 else index - 1)?.let { abs(log2(it) - log2(values[index])) }
+      }
+      ExposureMode.SHUTTER_PRIORITY -> {
+        val values = availableApertures
+        val index = _selectedApertureIndex.value
+        values.getOrNull(if (delta > 0) index - 1 else index + 1)?.let { 2 * abs(log2(it) - log2(values[index])) }
+      }
+      ExposureMode.MANUAL_MATCH -> null
+    }
+    return maxOf(MIN_DIAL_TOLERANCE_STOPS, (gap ?: 0.0) / 2 + 0.01)
+  }
+
+  fun exposureToleranceStops(): Double = getEvDelta()?.let(::dialToleranceStops) ?: MIN_DIAL_TOLERANCE_STOPS
+
+  private fun isWithinDialTolerance(): Boolean = getEvDelta()?.let { abs(it) <= dialToleranceStops(it) } ?: true
 
   private fun closestActualShutter(idealMetered: Double): Int? {
     val stock = _selectedFilmStock.value
@@ -549,7 +579,7 @@ class LightMeterViewModel @JvmOverloads constructor(
     val film = _selectedFilmStock.value?.reciprocityGuidance(raw ?: availableShutterSeconds[_selectedShutterIndex.value])
     val camera = _currentCameraSetup.value
     val limit = when {
-      raw != null && (getEvDelta()?.let { abs(it) > 0.6 } == true) && _exposureMode.value != ExposureMode.MANUAL_MATCH ->
+      raw != null && !isWithinDialTolerance() && _exposureMode.value != ExposureMode.MANUAL_MATCH ->
         if (camera == null) "Outside the selectable exposure range. Change aperture, shutter or filter."
         else "Outside ${camera.name}'s exposure range. Change aperture or shutter, or use a filter."
       camera != null && raw != null && getCorrectedShutterSeconds() == null &&
@@ -715,34 +745,30 @@ class LightMeterViewModel @JvmOverloads constructor(
     if (_isSaving.value) return
     val value = apertureLabel.removePrefix("f/").toDoubleOrNull() ?: return
     val idx = availableApertures.indexOfFirst { abs(it - value) < 1e-9 }
-    if (idx != -1) {
-      _selectedApertureIndex.value = idx
-      persistSetup()
-    }
+    if (idx != -1) setApertureIndex(idx)
   }
 
   fun setShutterDirectly(shutterLabel: String) {
     if (_isSaving.value) return
     val value = ExposureCalculator.parseShutterSpeeds(shutterLabel)?.singleOrNull() ?: return
     val idx = availableShutterSeconds.indexOfFirst { abs(it - value) < 1e-9 }
-    if (idx != -1) {
-      _selectedShutterIndex.value = idx
-      persistSetup()
-    }
+    if (idx != -1) setShutterIndex(idx)
   }
 
-  fun applySunny16Preset(apertureLabel: String, shutterLabel: String, iso: Int) {
+  /** [ruleSeconds] is the rule's unrounded time (1/ISO); without it the dial label's time sets the estimate. */
+  fun applySunny16Preset(apertureLabel: String, shutterLabel: String, iso: Int, ruleSeconds: Double? = null) {
     if (_isSaving.value || iso !in 1..102400) return
     val referenceAperture = apertureLabel.removePrefix("f/").toDoubleOrNull()
       ?.takeIf { it.isFinite() && it in 1.0..64.0 } ?: return
     val referenceSeconds = ExposureCalculator.parseShutterSpeeds(shutterLabel)?.singleOrNull() ?: return
+    val estimateSeconds = ruleSeconds?.takeIf { it.isFinite() && it > 0.0 } ?: referenceSeconds
     setMeasurementSource(MeasurementSource.SUNNY_16)
     sensorManager.setLocked(false)
     setIso(iso)
     _selectedApertureIndex.value = nearest(availableApertures, referenceAperture)
     _selectedShutterIndex.value = nearest(availableShutterSeconds, referenceSeconds)
     // The weather estimate is independent of which values the camera can dial.
-    setPresetEv100(log2(referenceAperture * referenceAperture / referenceSeconds) - log2(iso / 100.0))
+    setPresetEv100(log2(referenceAperture * referenceAperture / estimateSeconds) - log2(iso / 100.0))
     persistSetup()
   }
 
@@ -933,7 +959,8 @@ class LightMeterViewModel @JvmOverloads constructor(
       rawSeconds = rawSec,
       correctedSeconds = corrSec,
       evValue = if (ev100.isFinite()) ExposureCalculator.ev100ToEvForIso(ev100, activeIso) else 0.0,
-      luxValue = sensorManager.lux.value,
+      // Only the light sensor measures lux; other sources record none rather than a value derived from EV.
+      luxValue = if (_measurementSource.value == MeasurementSource.SENSOR && ev100.isFinite()) sensorManager.lux.value else 0f,
       notes = notes,
       cameraName = _currentCameraSetup.value?.name.orEmpty(), focalLengthMm = _focalLengthMm.value,
       meteringSource = _measurementSource.value.name, exposureCompensation = _exposureCompensation.value,
@@ -1043,8 +1070,8 @@ class LightMeterViewModel @JvmOverloads constructor(
   fun startNewRoll(rollName: String, frameCapacity: Int = _selectedFormat.value.standardFramesPerRoll, pushStops: Int = 0) {
     if (!_setupReady.value || _isSaving.value || frameCapacity !in 1..1000 || rollName.trim().length !in 1..100 ||
       pushStops !in 0..4) return
-    val iso = _selectedFilmStock.value?.isoForPush(pushStops)
-      ?: if (pushStops == 0) activeIso else return
+    // Without a push, keep the EI the photographer chose rather than resetting it to box speed.
+    val iso = if (pushStops == 0) activeIso else _selectedFilmStock.value?.isoForPush(pushStops) ?: return
     _currentRollId.value = UUID.randomUUID().toString()
     _currentRollName.value = rollName.trim().ifEmpty { "New roll" }
     _activeRollFrameCount.value = 0
@@ -1328,8 +1355,14 @@ class LightMeterViewModel @JvmOverloads constructor(
 
   fun deleteFilmStock(id: Int) {
     if (_isSaving.value) return
+    _isSaving.value = true
     viewModelScope.launch {
       try {
+        // An unfinished roll with frames would lose its film profile and meter without correction.
+        if (repository.allRolls.first().any { it.filmStockId == id && !it.isFinished && it.lastFrameNumber > 0 }) {
+          _userMessage.value = "This film is loaded in an unfinished roll. Finish that roll before deleting the film."
+          return@launch
+        }
         repository.deleteStock(id)
         if (_selectedFilmStock.value?.id == id) {
           _selectedFilmStock.value = null
@@ -1339,7 +1372,7 @@ class LightMeterViewModel @JvmOverloads constructor(
       } catch (error: Exception) {
         if (error is CancellationException) throw error
         _userMessage.value = "Could not delete the film. Try again."
-      }
+      } finally { _isSaving.value = false }
     }
   }
 

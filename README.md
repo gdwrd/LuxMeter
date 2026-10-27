@@ -30,7 +30,7 @@ The primary navigation is **Meter** and **Rolls**. Settings contains calibration
 
 ## Metering and calibration
 
-Camera metering requests an auto-exposure region matching the outlined preview. It verifies the reported region and exposure convergence, then derives EV100 from the camera's reported shutter duration, sensitivity, aperture, and post-RAW gain. Missing data or unsupported region metering produces an unavailable state, not a fabricated reading.
+Camera metering requests an auto-exposure region matching the outlined preview. It verifies the reported region and exposure convergence, then derives EV100 from the camera's reported shutter duration, sensitivity, aperture, and post-RAW gain. Missing data or unsupported region metering produces an unavailable state, not a fabricated reading. Preview auto-exposure requests the camera's slowest supported frame rate, and a reading taken at both the longest preview exposure and the highest sensitivity is reported as too dark rather than accepted.
 
 The preview explicitly requests SDR, disables supported scene/effect enhancements, edge enhancement and noise reduction, and keeps preview/video stabilization off. Ordinary camera exposure, focus, white balance and framing correction remain enabled. Black-and-white film, including custom film, gives a monochrome live view, held view and automatic reference image. These display changes do not alter the metering calculation. Phone processing is device-dependent: the preview is a composition aid, not a prediction of film latitude, spectral response or the final photograph.
 
@@ -46,7 +46,7 @@ Calibration stays on the device and is excluded from backup and transfer. The ol
 
 The film picker includes 55 built-in presets with dimensional canister artwork in the app's light and dark themes, including additional Ilford, Kentmere, Foma, Rollei, CineStill, Harman and Lomography stocks. Search by film, brand or speed, filter color, black-and-white or slide film, and expand the grid to browse the complete library. Catalogue identity and long-exposure support are separate: films without a supported correction are explicitly marked unknown.
 
-HP5 and Delta 3200 use [Ilford's published powers](https://www.ilfordphoto.com/wp/wp-content/uploads/2024/05/Reciprocity-Failure-Compensation-v2.pdf). Tri-X uses [Kodak's published timed points](https://www.kodakprofessional.com/sites/default/files/wysiwyg/pro/resources/f4017_TriX.pdf), with estimated interpolation and a development-adjustment reminder. CineStill 800T uses its approximate power of 1.3 and explicitly asks you to bracket.
+HP5 Plus, Delta 3200, Delta 100, Delta 400, FP4 Plus, Pan F Plus, XP2 Super, SFX 200, Ortho Plus and Kentmere Pan 100/400 use [Ilford's published powers](https://www.ilfordphoto.com/wp/wp-content/uploads/2024/05/Reciprocity-Failure-Compensation-v2.pdf). Tri-X uses [Kodak's published timed points](https://www.kodakprofessional.com/sites/default/files/wysiwyg/pro/resources/f4017_TriX.pdf), with estimated interpolation and a development-adjustment reminder. CineStill 800T uses its approximate power of 1.3 and explicitly asks you to bracket.
 
 The additional presets support their stated ordinary-exposure ranges without inventing longer correction curves; **Film details** shows each limit and source. ColorPlus 200 is explicitly labelled **Short-exposure estimate**: it assumes ordinary exposure through one second because no manufacturer reciprocity range is supplied. Its linked catalogue establishes ISO, not a validated correction range.
 

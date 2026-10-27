@@ -184,4 +184,26 @@ class CameraMeteringTest {
     assertNull(CameraMetering.framingZoom(50.0, floatArrayOf(), 6f, 4f, 1.5f, 0))
     assertNull(CameraMetering.framingZoom(50.0, null, 6f, 4f, 1.5f, 0))
   }
+
+  @Test
+  fun `readings at both the exposure and sensitivity limits are too dark to trust`() {
+    val longest = CameraMetering.longestPreviewExposureNs(500_000_000L, 15)!!
+    assertEquals(66_666_666L, longest)
+    assertTrue(CameraMetering.isAtLowLightLimit(66_000_000L, 3200, longest, 3200))
+    assertFalse(CameraMetering.isAtLowLightLimit(66_000_000L, 800, longest, 3200))
+    assertFalse(CameraMetering.isAtLowLightLimit(8_000_000L, 3200, longest, 3200))
+    assertFalse(CameraMetering.isAtLowLightLimit(66_000_000L, 3200, null, 3200))
+    assertFalse(CameraMetering.isAtLowLightLimit(null, 3200, longest, 3200))
+    assertEquals(100_000_000L, CameraMetering.longestPreviewExposureNs(100_000_000L, 7))
+    assertEquals(33_333_333L, CameraMetering.longestPreviewExposureNs(null, 30))
+    assertNull(CameraMetering.longestPreviewExposureNs(null, null))
+  }
+
+  @Test
+  fun `the slowest frame-rate range keeps the fastest upper bound`() {
+    assertEquals(7 to 30, CameraMetering.slowestFpsRange(listOf(15 to 30, 7 to 15, 7 to 30, 30 to 30)))
+    assertEquals(15 to 30, CameraMetering.slowestFpsRange(listOf(5 to 5, 15 to 30)))
+    assertEquals(5 to 10, CameraMetering.slowestFpsRange(listOf(5 to 10, 10 to 15)))
+    assertNull(CameraMetering.slowestFpsRange(emptyList()))
+  }
 }

@@ -15,6 +15,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.SystemClock
 import android.provider.Settings
+import android.util.Range
 import android.view.Surface
 import android.view.View
 import android.view.ViewOutlineProvider
@@ -226,6 +227,8 @@ fun CameraViewfinder(
     var zoomReady = false
     var supportsFrameMetering = false
     var activeArray: Rect? = null
+    var longestExposureNs: Long? = null
+    var maxSensitivity: Int? = null
     var watchdog: Runnable? = null
 
     fun unavailable(message: String) {
@@ -270,6 +273,16 @@ fun CameraViewfinder(
                   .setCaptureRequestOption(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, 0)
                   .setCaptureRequestOption(CaptureRequest.CONTROL_AE_LOCK, false)
                   .setCaptureRequestOption(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE, CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_OFF)
+                // A slower minimum frame rate lets auto-exposure hold the shutter open longer in dim light.
+                val fpsRange = CameraMetering.slowestFpsRange(
+                  cameraInfo.getCameraCharacteristic(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)
+                    ?.map { it.lower to it.upper }.orEmpty())
+                if (fpsRange != null) {
+                  interop.setCaptureRequestOption(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, Range(fpsRange.first, fpsRange.second))
+                }
+                longestExposureNs = CameraMetering.longestPreviewExposureNs(
+                  cameraInfo.getCameraCharacteristic(CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE)?.upper, fpsRange?.first)
+                maxSensitivity = cameraInfo.getCameraCharacteristic(CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE)?.upper
                 if (cameraInfo.getCameraCharacteristic(CameraCharacteristics.CONTROL_AVAILABLE_SCENE_MODES)
                     ?.contains(CaptureRequest.CONTROL_SCENE_MODE_DISABLED) == true) {
                   interop.setCaptureRequestOption(CaptureRequest.CONTROL_SCENE_MODE, CaptureRequest.CONTROL_SCENE_MODE_DISABLED)
@@ -360,6 +373,10 @@ fun CameraViewfinder(
                                 measuring = true
                                 canRetry = unsettledMs > 5000L
                               }
+                              CameraMetering.isAtLowLightLimit(result.get(CaptureResult.SENSOR_EXPOSURE_TIME),
+                                result.get(CaptureResult.SENSOR_SENSITIVITY), longestExposureNs, maxSensitivity) ->
+                                // At its limits the camera reports settings brighter than the scene; never meter from them.
+                                unavailable("Too dark for the phone camera. Use the light sensor or Sunny 16.")
                               else -> {
                                 val boost = result.get(CaptureResult.CONTROL_POST_RAW_SENSITIVITY_BOOST) ?: 100
                                 val ev = CameraMetering.ev100(

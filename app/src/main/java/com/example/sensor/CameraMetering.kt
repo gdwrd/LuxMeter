@@ -25,6 +25,36 @@ object CameraMetering {
       .takeIf { it.isFinite() }
   }
 
+  /**
+   * True when auto-exposure has run out of both shutter time and sensitivity. Many phones still report
+   * convergence there, but the scene is darker than the reported settings imply.
+   */
+  fun isAtLowLightLimit(exposureTimeNs: Long?, sensitivity: Int?, longestExposureNs: Long?, maxSensitivity: Int?): Boolean {
+    if (exposureTimeNs == null || sensitivity == null || longestExposureNs == null || maxSensitivity == null ||
+      exposureTimeNs <= 0L || sensitivity <= 0 || longestExposureNs <= 0L || maxSensitivity <= 0) return false
+    return exposureTimeNs >= longestExposureNs * LIMIT_FRACTION && sensitivity >= maxSensitivity * LIMIT_FRACTION
+  }
+
+  /** The longest preview exposure: the sensor's limit, capped by the slowest frame rate auto-exposure may use. */
+  fun longestPreviewExposureNs(maxExposureNs: Long?, slowestFps: Int?): Long? {
+    val frameLimit = slowestFps?.takeIf { it > 0 }?.let { 1_000_000_000L / it }
+    return listOfNotNull(maxExposureNs?.takeIf { it > 0L }, frameLimit).minOrNull()
+  }
+
+  /**
+   * The frame-rate range that lets auto-exposure hold the shutter open longest, keeping the fastest upper bound.
+   * Ranges that can reach a smooth preview rate are preferred so composing stays usable.
+   */
+  fun slowestFpsRange(ranges: List<Pair<Int, Int>>): Pair<Int, Int>? {
+    val valid = ranges.filter { (lower, upper) -> lower > 0 && upper >= lower }
+    return valid.filter { it.second >= SMOOTH_PREVIEW_FPS }.ifEmpty { valid }
+      .minWithOrNull(compareBy<Pair<Int, Int>> { it.first }.thenByDescending { it.second })
+  }
+
+  private const val SMOOTH_PREVIEW_FPS = 24
+
+  private const val LIMIT_FRACTION = 0.95
+
   fun selectedAreaAt(x: Float, y: Float): RectF? {
     if (!x.isFinite() || !y.isFinite() || x !in 0f..1f || y !in 0f..1f) return null
     val left = (x - 0.06f).coerceIn(0f, 0.88f)

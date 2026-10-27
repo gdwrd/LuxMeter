@@ -88,6 +88,31 @@ class ProductFlowTest {
     return model.cameraSetupSavedId.value!!
   }
 
+  @Test fun sparseShutterDialsRoundToTheNearestStepInsteadOfReportingOutOfRange() {
+    val model = meter()
+    model.setIso(100)
+    camera(model, CameraSetup(name = "Box camera", shutterSpeeds = "1/30,1/125,1/500", allowsBulb = false))
+    model.setApertureDirectly("f/8")
+    // The metered 1/60 sits a full stop from the nearest dial value on a dial with two-stop gaps.
+    model.onOpticalEvMeasured(log2(64.0 * 60.0))
+    assertEquals(1.0 / 30, model.getCorrectedShutterSeconds()!!, 0.000001)
+    assertFalse(model.getExposureGuidance().orEmpty().contains("Outside"))
+    // Beyond the fastest speed there is no neighbour to round to, so the scene is out of range.
+    model.onOpticalEvMeasured(log2(64.0 * 4000.0))
+    assertNull(model.getCorrectedShutterSeconds())
+    assertTrue(model.getExposureGuidance()!!.contains("Outside"))
+  }
+
+  @Test fun newRollsKeepTheChosenExposureIndex() {
+    val model = meter()
+    model.setFilmStock(stocks.hp5)
+    model.setIso(320)
+    model.startNewRoll("Next roll")
+    drain()
+    assertEquals(320, model.activeIso)
+    assertEquals(320, model.currentRoll.value!!.iso)
+  }
+
   @Test fun positiveCompensationAddsExposureAndFiltersAreAppliedBeforeFilmCorrection() {
     val model = meter()
     model.setIso(100)
