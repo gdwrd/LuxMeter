@@ -19,7 +19,8 @@ data class FilmRoll(
   val isFinished: Boolean = false,
   val createdAt: Long = System.currentTimeMillis(),
   @ColumnInfo(defaultValue = "NULL") val boxIso: Int? = null,
-  @ColumnInfo(defaultValue = "NULL") val pushStops: Int? = null
+  @ColumnInfo(defaultValue = "NULL") val pushStops: Int? = null,
+  @ColumnInfo(defaultValue = "NULL") val filmType: String? = null
 )
 
 fun processingLabel(pushStops: Int?): String = when (pushStops) {

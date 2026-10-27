@@ -38,7 +38,7 @@ fun CartoonFilmRoll(
     animationSpec = tween(200),
     label = "film_scale"
   )
-  val label = remember(stock.brand, stock.name, stock.iso, stock.badgeStyle) { filmLabel(stock) }
+  val label = remember(stock.brand, stock.name, stock.iso, stock.type, stock.badgeStyle) { filmLabel(stock) }
   val paint = remember {
     Paint(Paint.ANTI_ALIAS_FLAG).apply {
       textAlign = Paint.Align.CENTER
@@ -159,9 +159,9 @@ private fun DrawScope.drawFilmCanister(stock: FilmStock, label: FilmLabel, paint
   }
 }
 
-private data class FilmLabel(val family: String, val color: Color, val ink: Color, val accent: Color)
+internal data class FilmLabel(val family: String, val color: Color, val ink: Color, val accent: Color)
 
-private fun filmLabel(stock: FilmStock): FilmLabel {
+internal fun filmLabel(stock: FilmStock): FilmLabel {
   val name = stock.name.uppercase()
   val badge = stock.badgeStyle
   return when {
@@ -198,12 +198,14 @@ private fun filmLabel(stock: FilmStock): FilmLabel {
     stock.brand.equals("CineStill", ignoreCase = true) || badge == "CINESTILL" -> when {
       "50D" in name -> FilmLabel("50D", Color(0xFFC3CDD2), Color(0xFF344047), Color(0xFFC49776))
       "400D" in name -> FilmLabel("400D", Color(0xFFA6BECD), Color(0xFF253C50), Color(0xFFDFBDA0))
-      else -> FilmLabel("800T", Color(0xFF862E3C), Color(0xFFFFF7F4), Color(0xFF8AC6D2))
+      "800T" in name -> FilmLabel("800T", Color(0xFF862E3C), Color(0xFFFFF7F4), Color(0xFF8AC6D2))
+      else -> FilmLabel(if ("BWXX" in name) "BwXX" else "FILM", Color(0xFF45464B), Color.White, Color(0xFFC7C7CB))
     }
     "VELVIA" in name || badge == "FUJI_VELVIA" -> FilmLabel("VELVIA", Color(0xFF538369), Color(0xFFF4FFF7), Color(0xFFA95382))
     "SUPERIA" in name || badge == "FUJI_SUPERIA" -> FilmLabel("SUPERIA", Color(0xFF4A8666), Color(0xFFF4FFF7), Color(0xFFDADCDD))
     "ACROS" in name || badge == "ACROS" -> FilmLabel("ACROS II", Color(0xFFBAC8C0), Color(0xFF25382E), Color(0xFF518369))
     "FOMAPAN" in name || badge == "FOMAPAN" -> FilmLabel("FOMAPAN", Color(0xFF657891), Color(0xFFF9F5EB), Color(0xFFAAB6C6))
+    stock.isBlackAndWhite -> FilmLabel(badge.take(10), Color(0xFF45464B), Color(0xFFF5F5F7), Color(0xFFB3B3B8))
     else -> FilmLabel("FILM", Color(0xFFB9A783), Color(0xFF30281A), Color(0xFF75664B))
   }
 }

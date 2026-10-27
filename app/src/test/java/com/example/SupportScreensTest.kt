@@ -15,6 +15,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performTextReplacement
 import androidx.lifecycle.ViewModelStore
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.dao.FilmLogDao
@@ -243,6 +244,80 @@ class SupportScreensTest {
   }
 
   @Test
+  @Config(qualifiers = "mdpi") // Explicit dimensions hang editable dialogs in Robolectric: robolectric/robolectric#8460.
+  fun rollsCanLogRepeatedManualShotsWithoutMeteringOrChangingTheActiveRoll() {
+    val model = meter()
+    var targetRollId = ""
+    var activeRollId = ""
+    compose.runOnIdle { model.startNewRoll("Manual roll", 24) }
+    compose.runOnIdle {
+      targetRollId = model.currentRollId.value
+      model.startNewRoll("Meter roll", 36)
+    }
+    compose.runOnIdle {
+      activeRollId = model.currentRollId.value
+      assertFalse(model.hasReading.value)
+    }
+    compose.setContent { MyApplicationTheme { RollsScreen(model) } }
+    compose.onNodeWithText("Manual roll").performClick()
+    compose.onNodeWithText("Add shot").performClick()
+    compose.onNodeWithText("Actual shutter time (seconds)").performScrollTo().performTextReplacement("1/125")
+    compose.onNodeWithText("Add photo").performScrollTo().assertIsEnabled()
+    compose.onNodeWithText("Save manual record").performClick()
+    compose.waitUntil { logs.entries.value.size == 1 }
+    compose.runOnIdle {
+      val entry = logs.entries.value.single()
+      assertEquals(targetRollId, entry.rollId)
+      assertTrue(entry.isManual)
+      assertFalse(entry.hasMeterReading)
+      assertEquals(1.0 / 125, entry.correctedSeconds, 0.0)
+      assertEquals(activeRollId, model.currentRollId.value)
+    }
+    compose.onNodeWithText("Add shot").performClick()
+    compose.onNodeWithText("Actual shutter time (seconds)").performScrollTo().performTextReplacement("1/60")
+    compose.onNodeWithText("Save manual record").performClick()
+    compose.waitUntil { logs.entries.value.size == 2 }
+    compose.onNodeWithText("Frame 2 saved · manual").assertExists()
+    compose.onNodeWithText("Undo").performClick()
+    compose.waitUntil { logs.entries.value.size == 1 }
+    compose.runOnIdle { assertEquals(activeRollId, model.currentRollId.value) }
+  }
+
+  @Test
+  @Config(qualifiers = "mdpi") // Explicit dimensions hang editable dialogs in Robolectric: robolectric/robolectric#8460.
+  fun newRollCanCreateAndSelectACustomFilmWithoutChangingMeterSelection() {
+    val model = meter()
+    compose.setContent { MyApplicationTheme { RollsScreen(model) } }
+    var originalRollId = ""
+    var originalFilmId: Int? = null
+    compose.runOnIdle {
+      originalRollId = model.currentRollId.value
+      originalFilmId = model.selectedFilmStock.value?.id
+    }
+    compose.onNodeWithText("Start a new roll").performClick()
+    compose.onNodeWithText("Roll name").performTextReplacement("Personal film roll")
+    compose.onNodeWithText("Choose film · ISO 400").performClick()
+    compose.onNodeWithText("Add custom film").performClick()
+    compose.onNodeWithText("Film name").performTextReplacement("My test film")
+    compose.onNodeWithText("Box ISO").performTextReplacement("125")
+    compose.onNodeWithText("Color Negative").performClick()
+    compose.onNodeWithText("Black & White").performClick()
+    compose.onNodeWithText("Save film").performClick()
+    compose.onNodeWithText("Film: My test film").assertExists()
+    compose.onNodeWithText("Start roll").performClick()
+    compose.waitUntil { model.allRolls.value.any { it.name == "Personal film roll" } }
+    compose.runOnIdle {
+      val created = model.allRolls.value.single { it.name == "Personal film roll" }
+      assertEquals("My test film", created.filmStockName)
+      assertEquals("Black & White", created.filmType)
+      assertEquals(125, created.iso)
+      assertEquals(originalRollId, model.currentRollId.value)
+      assertEquals(originalFilmId, model.selectedFilmStock.value?.id)
+    }
+    compose.onNodeWithText("Add shot").assertIsEnabled()
+  }
+
+  @Test
   fun settingsCanChangeTheInactiveSourcesCalibration() {
     val model = meter()
     compose.runOnIdle {
@@ -274,9 +349,14 @@ class SupportScreensTest {
   }
 
   private class TestStocks : FilmStockDao {
-    override fun getAllFilmStocks() = MutableStateFlow(listOf(hp5, portra))
-    override suspend fun getFilmStockById(id: Int): FilmStock? = null
-    override suspend fun insertFilmStock(stock: FilmStock) = stock.id.toLong()
+    private val entries = MutableStateFlow(listOf(hp5, portra))
+    override fun getAllFilmStocks() = entries
+    override suspend fun getFilmStockById(id: Int): FilmStock? = entries.value.firstOrNull { it.id == id }
+    override suspend fun insertFilmStock(stock: FilmStock): Long {
+      val id = if (stock.id == 0) (entries.value.maxOfOrNull { it.id } ?: 0) + 1 else stock.id
+      entries.value = entries.value.filterNot { it.id == id } + stock.copy(id = id)
+      return id.toLong()
+    }
     override suspend fun insertAllStocks(stocks: List<FilmStock>) = Unit
     override suspend fun deleteFilmStockById(id: Int) = Unit
   }
@@ -287,6 +367,7 @@ class SupportScreensTest {
     override fun getEntriesForRoll(rollId: String) = entries.map { list -> list.filter { it.rollId == rollId } }
     override suspend fun getLatestEntryForRoll(rollId: String) =
       entries.value.filter { it.rollId == rollId }.maxByOrNull { it.frameNumber }
+    override suspend fun getLogEntry(id: Int) = entries.value.firstOrNull { it.id == id }
     private var nextId = 1
     override suspend fun insertLogEntry(entry: FilmLogEntry): Long {
       val id = if (entry.id > 0) entry.id else nextId++
@@ -295,6 +376,9 @@ class SupportScreensTest {
     }
     override suspend fun updateLogNotes(id: Int, notes: String) {
       entries.value = entries.value.map { if (it.id == id) it.copy(notes = notes) else it }
+    }
+    override suspend fun updateLogPhoto(id: Int, name: String?) {
+      entries.value = entries.value.map { if (it.id == id) it.copy(photoFileName = name) else it }
     }
     override suspend fun deleteEntryById(id: Int) { entries.value = entries.value.filterNot { it.id == id } }
     override suspend fun deleteRollEntries(rollId: String) { entries.value = entries.value.filterNot { it.rollId == rollId } }

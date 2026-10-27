@@ -46,6 +46,7 @@ import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -76,7 +77,9 @@ fun FilmStockPickerSheet(
   hapticManager: HapticManager,
   onApply: (FilmStock?, Int, Int?, Boolean) -> Boolean,
   needsConfirmation: (FilmStock?, Int, Int?) -> Boolean,
-  onDismiss: () -> Unit
+  onDismiss: () -> Unit,
+  onAddCustomFilm: (() -> Unit)? = null,
+  newFilmId: Int? = null
 ) {
   val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
   var showIsoMenu by rememberSaveable { mutableStateOf(false) }
@@ -88,6 +91,7 @@ fun FilmStockPickerSheet(
   var query by rememberSaveable { mutableStateOf("") }
   var filmType by rememberSaveable { mutableStateOf("All") }
   var showAll by rememberSaveable { mutableStateOf(false) }
+  var selectedNewFilmId by rememberSaveable { mutableStateOf<Int?>(null) }
   val draftStock = stocks.firstOrNull { it.id == draftStockId }
     ?: selectedStock?.takeIf { it.id == draftStockId }
   val validSettings = draftIso in 1..102400 && (draftStock == null || draftStock.iso > 0) &&
@@ -103,6 +107,17 @@ fun FilmStockPickerSheet(
     matchesType && "${film.brand} ${film.name} ${film.iso}".contains(query.trim(), ignoreCase = true)
   }
   val visibleStocks = if (showAll) filteredStocks else filteredStocks.take(9)
+
+  LaunchedEffect(newFilmId, stocks) {
+    stocks.firstOrNull { newFilmId != null && newFilmId != selectedNewFilmId && it.id == newFilmId }?.let { film ->
+      selectedNewFilmId = film.id
+      draftStockId = film.id
+      draftIso = film.iso
+      draftPushStops = 0
+      query = film.name
+      filmType = "All"
+    }
+  }
 
   ModalBottomSheet(
     onDismissRequest = onDismiss,
@@ -125,6 +140,11 @@ fun FilmStockPickerSheet(
           Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("${stocks.size} film presets", style = MaterialTheme.typography.bodyMedium,
               color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (onAddCustomFilm != null) {
+              OutlinedButton(onClick = onAddCustomFilm, modifier = Modifier.fillMaxWidth()) {
+                Text("Add custom film")
+              }
+            }
             TextField(
               value = query,
               onValueChange = { query = it; showAll = false },
@@ -234,6 +254,10 @@ fun FilmStockPickerSheet(
                 }
               }
             }
+          }
+        }
+        item(span = { GridItemSpan(maxLineSpan) }) {
+          Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Push processing", style = MaterialTheme.typography.titleMedium)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
               (0..4).forEach { stops ->
@@ -252,6 +276,10 @@ fun FilmStockPickerSheet(
                 )
               }
             }
+          }
+        }
+        item(span = { GridItemSpan(maxLineSpan) }) {
+          Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Meter at EI $draftIso", style = MaterialTheme.typography.titleLarge)
             Text(if (draftPushStops == null) processingLabel(null) else "Ask lab: ${processingLabel(draftPushStops)}",
               style = MaterialTheme.typography.bodyMedium)
@@ -262,6 +290,10 @@ fun FilmStockPickerSheet(
             } else if (draftStock.isoForPush(4) == null) {
               Text("Some choices exceed the meter's ISO limit.", style = MaterialTheme.typography.bodyMedium)
             }
+          }
+        }
+        item(span = { GridItemSpan(maxLineSpan) }) {
+          Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
               Text("Shooting ISO", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
               Box {

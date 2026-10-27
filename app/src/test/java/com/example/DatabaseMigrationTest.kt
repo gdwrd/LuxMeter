@@ -31,7 +31,7 @@ class DatabaseMigrationTest {
   private val databases = mutableListOf<AppDatabase>()
 
   private fun open(): AppDatabase = Room.databaseBuilder(context, AppDatabase::class.java, name)
-    .addMigrations(AppDatabase.MIGRATION_1_2, AppDatabase.MIGRATION_2_3)
+    .addMigrations(AppDatabase.MIGRATION_1_2, AppDatabase.MIGRATION_2_3, AppDatabase.MIGRATION_3_4)
     .addCallback(AppDatabase.Companion.DatabaseCallback())
     .allowMainThreadQueries()
     .build().also { databases += it }
@@ -67,7 +67,7 @@ class DatabaseMigrationTest {
     assertEquals(FilmRoll(
       id = "square", name = "Winter square", filmStockId = custom.id, filmStockName = custom.name,
       iso = 200, format = CameraFormat.MEDIUM_66.name, frameCapacity = 19, lastFrameNumber = 19,
-      isFinished = true, createdAt = 1000L
+      isFinished = true, createdAt = 1000L, filmType = custom.type
     ), repository.getRoll("square"))
     val rolls = repository.allRolls.first().associateBy { it.id }
     assertEquals(4, rolls.size)
@@ -93,8 +93,8 @@ class DatabaseMigrationTest {
     createVersionOne(emptyList(), emptyList())
     val database = open()
     val repository = database.repository()
-    assertEquals(3, database.openHelper.readableDatabase.version)
-    assertEquals(27, repository.allFilmStocks.first().size)
+    assertEquals(4, database.openHelper.readableDatabase.version)
+    assertEquals(55, repository.allFilmStocks.first().size)
     assertTrue(repository.allLogEntries.first().isEmpty())
     assertTrue(repository.allRolls.first().isEmpty())
     assertTrue(repository.allCameraSetups.first().isEmpty())
@@ -122,10 +122,11 @@ class DatabaseMigrationTest {
     val database = open()
     val repository = database.repository()
     val expectedRoll = FilmRoll(id = "loaded", name = "Loaded legacy roll", filmStockId = stock.id,
-      filmStockName = stock.name, iso = 1600, frameCapacity = 24, lastFrameNumber = 3, createdAt = 123L)
+      filmStockName = stock.name, iso = 1600, frameCapacity = 24, lastFrameNumber = 3, createdAt = 123L,
+      filmType = stock.type)
     val expectedFrame = entry.copy(cameraName = "My camera", exposureCompensation = 1.0,
       filterStops = 2.0, calibrationEv = 0.5f)
-    assertEquals(3, database.openHelper.readableDatabase.version)
+    assertEquals(4, database.openHelper.readableDatabase.version)
     assertEquals(expectedRoll, repository.getRoll("loaded"))
     assertEquals(listOf(expectedFrame), repository.getEntriesForRoll("loaded").first())
     assertEquals(stock, repository.getFilmStock(stock.id))
@@ -134,6 +135,50 @@ class DatabaseMigrationTest {
     val reopened = open().repository()
     assertEquals(expectedRoll, reopened.getRoll("loaded"))
     assertEquals(listOf(expectedFrame), reopened.getEntriesForRoll("loaded").first())
+  }
+
+  @Test fun versionThreePreservesSnapshotsAndBackfillsOnlyLinkedFilmTypes() = runBlocking {
+    val monochrome = FilmStock(87, "Home emulsion", "My lab", 400, "Black & White", 1.6,
+      description = "My tested correction", badgeStyle = "CUSTOM", isCustom = true)
+    val color = monochrome.copy(id = 88, name = "Home colour", type = "Color Negative")
+    val entries = listOf(
+      frame(7, "mono", 3).copy(filmStockName = monochrome.name, notes = "Keep the note"),
+      frame(8, "color", 4).copy(filmStockName = color.name),
+      frame(9, "missing", 5).copy(filmStockName = monochrome.name)
+    )
+    createVersionOne(listOf(monochrome, color), entries)
+    val old = FrameworkSQLiteOpenHelperFactory().create(
+      SupportSQLiteOpenHelper.Configuration.builder(context).name(name)
+        .callback(object : SupportSQLiteOpenHelper.Callback(3) {
+          override fun onCreate(db: SupportSQLiteDatabase) = error("Version 1 fixture must exist")
+          override fun onUpgrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) {
+            AppDatabase.MIGRATION_1_2.migrate(db)
+            AppDatabase.MIGRATION_2_3.migrate(db)
+          }
+        }).build()
+    )
+    old.writableDatabase.execSQL("UPDATE film_rolls SET boxIso = 400, pushStops = 2, iso = 1600, isFinished = 0 WHERE id = 'mono'")
+    old.writableDatabase.execSQL("UPDATE film_log_entries SET boxIso = 400 WHERE id = 7")
+    old.writableDatabase.execSQL("UPDATE film_rolls SET filmStockId = 999 WHERE id = 'missing'")
+    old.close()
+
+    val database = open()
+    val repository = database.repository()
+    assertEquals(4, database.openHelper.readableDatabase.version)
+    assertEquals("Black & White", repository.getRoll("mono")!!.filmType)
+    assertEquals("Color Negative", repository.getRoll("color")!!.filmType)
+    assertNull(repository.getRoll("missing")!!.filmType)
+    val roll = repository.getRoll("mono")!!
+    assertEquals(1600, roll.iso)
+    assertEquals(400, roll.boxIso)
+    assertEquals(2, roll.pushStops)
+    assertEquals(3, roll.lastFrameNumber)
+    assertFalse(roll.isFinished)
+    val expectedEntries = entries.map { if (it.id == 7) it.copy(boxIso = 400) else it }
+    assertEquals(expectedEntries, repository.allLogEntries.first().sortedBy { it.id })
+    assertTrue(repository.allLogEntries.first().all { it.photoFileName == null })
+    database.close()
+    assertEquals(expectedEntries, open().repository().allLogEntries.first().sortedBy { it.id })
   }
 
   @Test fun migratedCustomProfileStaysEnabledAndUnknownNewProfileStaysUnknown() = runBlocking {

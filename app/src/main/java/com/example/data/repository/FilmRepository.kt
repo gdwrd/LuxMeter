@@ -91,6 +91,10 @@ class FilmRepository(
 
   suspend fun updateLogNotes(id: Int, notes: String) = atomic { filmLogDao.updateLogNotes(id, notes) }
 
+  suspend fun getLogEntry(id: Int): FilmLogEntry? = filmLogDao.getLogEntry(id)
+
+  suspend fun updateLogPhoto(id: Int, name: String?) = atomic { filmLogDao.updateLogPhoto(id, name) }
+
   suspend fun deleteLogEntry(id: Int) {
     filmLogDao.deleteEntryById(id)
   }

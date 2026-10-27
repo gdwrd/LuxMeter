@@ -1,12 +1,21 @@
 package com.example.ui.components
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -16,26 +25,35 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.example.sensor.ExposureCalculator
+import coil.compose.AsyncImage
 import java.text.NumberFormat
 import java.text.ParsePosition
 import java.util.Locale
 
 @Composable
+@OptIn(ExperimentalLayoutApi::class)
 fun ManualExposureDialog(
   initialAperture: Double,
   initialSeconds: Double,
   saving: Boolean,
   onSave: (Double, Double, String) -> Unit,
-  onDismiss: () -> Unit
+  onDismiss: () -> Unit,
+  rollSummary: String? = null,
+  onSaveWithPhoto: ((Double, Double, String, Uri?) -> Unit)? = null
 ) {
   var apertureText by rememberSaveable { mutableStateOf(formatExposureInput(initialAperture)) }
   var secondsText by rememberSaveable { mutableStateOf(if (initialSeconds > 0) formatExposureInput(initialSeconds) else "") }
   var notes by rememberSaveable { mutableStateOf("") }
+  var photoUri by rememberSaveable { mutableStateOf<String?>(null) }
+  val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+    if (uri != null) photoUri = uri.toString()
+  }
   val aperture = parseExposureInput(apertureText)
-  val seconds = parseExposureInput(secondsText)
+  val seconds = parseReferenceSeconds(secondsText)
   val apertureValid = aperture != null && aperture in 1.0..64.0
   val secondsValid = seconds != null && seconds > 0.0 && seconds <= ExposureCalculator.MAX_EXPOSURE_SECONDS
   AlertDialog(
@@ -43,6 +61,7 @@ fun ManualExposureDialog(
     title = { Text("Record manual exposure") },
     text = {
       Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        rollSummary?.let { Text(it, style = MaterialTheme.typography.titleMedium) }
         Text("Enter the settings you used. This records your choice without applying a film correction.", style = MaterialTheme.typography.bodyMedium)
         OutlinedTextField(
           value = apertureText, onValueChange = { apertureText = it },
@@ -54,20 +73,36 @@ fun ManualExposureDialog(
         OutlinedTextField(
           value = secondsText, onValueChange = { secondsText = it },
           label = { Text("Actual shutter time (seconds)") }, singleLine = true, enabled = !saving,
-          keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+          keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
           isError = secondsText.isNotEmpty() && !secondsValid,
-          supportingText = { Text(if (secondsText.isNotEmpty() && !secondsValid) "Enter more than 0 and at most 86,400 seconds." else "For 1/125 second, enter 0.008.") }
+          supportingText = { Text(if (secondsText.isNotEmpty() && !secondsValid) "Enter more than 0 and at most 86,400 seconds." else "Enter 1/125, 0.008, or a longer time in seconds.") }
         )
         OutlinedTextField(
           value = notes, onValueChange = { notes = it }, label = { Text("Notes (optional)") },
           enabled = !saving, minLines = 2, maxLines = 4, isError = notes.length > 5000,
           supportingText = { if (notes.length > 5000) Text("Keep notes within 5,000 characters.") }
         )
+        if (onSaveWithPhoto != null) {
+          photoUri?.let { uri ->
+            AsyncImage(model = Uri.parse(uri), contentDescription = "Selected reference photo",
+              modifier = Modifier.fillMaxWidth().height(120.dp), contentScale = ContentScale.Fit)
+          }
+          FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(enabled = !saving, onClick = {
+              photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+            }) { Text(if (photoUri == null) "Add photo" else "Replace photo") }
+            if (photoUri != null) TextButton(enabled = !saving, onClick = { photoUri = null }) { Text("Remove photo") }
+          }
+          Text("Photo is optional. Reference photos are not included in cloud backups or CSV.", style = MaterialTheme.typography.bodySmall)
+        }
       }
     },
     confirmButton = {
       TextButton(enabled = !saving && apertureValid && secondsValid && notes.length <= 5000, onClick = {
-        if (apertureValid && secondsValid) onSave(aperture!!, seconds!!, notes.trim())
+        if (apertureValid && secondsValid) {
+          if (onSaveWithPhoto != null) onSaveWithPhoto(aperture!!, seconds!!, notes.trim(), photoUri?.let(Uri::parse))
+          else onSave(aperture!!, seconds!!, notes.trim())
+        }
       }) { Text(if (saving) "Saving…" else "Save manual record") }
     },
     dismissButton = { TextButton(onClick = onDismiss, enabled = !saving) { Text("Cancel") } }

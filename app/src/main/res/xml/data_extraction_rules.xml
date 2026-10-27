@@ -2,6 +2,7 @@
 <data-extraction-rules>
     <cloud-backup>
         <exclude domain="sharedpref" path="meter_device_calibration.xml" />
+        <exclude domain="file" path="shot-photos/" />
     </cloud-backup>
     <device-transfer>
         <exclude domain="sharedpref" path="meter_device_calibration.xml" />

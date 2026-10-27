@@ -380,6 +380,10 @@ class LightMeterViewModelTest {
     override fun getEntriesForRoll(rollId: String) = entries.map { list -> list.filter { it.rollId == rollId } }
     override suspend fun getLatestEntryForRoll(rollId: String) = entries.value
       .filter { it.rollId == rollId }.maxByOrNull { it.frameNumber }
+    override suspend fun getLogEntry(id: Int) = entries.value.firstOrNull { it.id == id }
+    override suspend fun updateLogPhoto(id: Int, name: String?) {
+      entries.value = entries.value.map { if (it.id == id) it.copy(photoFileName = name) else it }
+    }
     override suspend fun insertLogEntry(entry: FilmLogEntry): Long {
       insertGate?.await()
       if (failInsert) error("Storage unavailable")

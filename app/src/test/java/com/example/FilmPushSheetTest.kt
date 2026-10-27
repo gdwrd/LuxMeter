@@ -73,6 +73,7 @@ class FilmPushSheetTest {
   fun cancellingPushDraftDoesNotApplySettings() {
     showSheet(pushStops = null)
     clickInSheet("+2")
+    compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText("Meter at EI 1600"))
     compose.onNodeWithText("Meter at EI 1600").assertExists()
     compose.onNodeWithText("Ask lab: Push +2 stops").assertExists()
     compose.runOnIdle { assertTrue(applied.isEmpty()) }

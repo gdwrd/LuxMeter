@@ -38,8 +38,8 @@ class FilmStockDatabaseTest {
   @Test fun firstQueryGetsAllProfilesAndReopeningDoesNotDuplicateThem() = runBlocking {
     val first = open()
     val initial = first.filmStockDao().getAllFilmStocks().first()
-    assertEquals(27, initial.size)
-    assertEquals(27, initial.map { it.brand to it.name }.toSet().size)
+    assertEquals(55, initial.size)
+    assertEquals(55, initial.map { it.brand to it.name }.toSet().size)
     val additions = listOf(
       Triple("Kodak", "Portra 160", 160), Triple("Kodak", "Portra 800", 800),
       Triple("Kodak", "UltraMax 400", 400), Triple("Kodak", "ColorPlus 200", 200),
@@ -52,8 +52,14 @@ class FilmStockDatabaseTest {
       Triple("Foma", "Fomapan 100", 100), Triple("Fujifilm", "Acros II", 100)
     )
     assertTrue(initial.map { Triple(it.brand, it.name, it.iso) }.containsAll(additions))
-    assertTrue(initial.all { !it.isCustom && it.hasReciprocityProfile })
-    assertTrue(initial.all { it.calculateCorrectedExposure(1.0 / 125.0) == 1.0 / 125.0 })
+    assertTrue(initial.all { !it.isCustom && it.sourceUrl != null })
+    assertEquals(36, initial.count { it.hasReciprocityProfile })
+    assertTrue(initial.filter { it.hasReciprocityProfile }.all {
+      it.calculateCorrectedExposure(1.0 / 125.0) == 1.0 / 125.0
+    })
+    assertTrue(initial.filterNot { it.hasReciprocityProfile }.all {
+      it.calculateCorrectedExposure(1.0 / 125.0) == null && it.correctionLabel == "Unknown correction"
+    })
     assertEquals(2.0, initial.single { it.name == "Tri-X 400" }.calculateCorrectedExposure(1.0)!!, 0.000001)
     first.close()
     val reopened = open().filmStockDao().getAllFilmStocks().first()
@@ -64,7 +70,7 @@ class FilmStockDatabaseTest {
     val old = open(repair = false)
     assertTrue(old.filmStockDao().getAllFilmStocks().first().isEmpty())
     old.close()
-    assertEquals(27, open().filmStockDao().getAllFilmStocks().first().size)
+    assertEquals(55, open().filmStockDao().getAllFilmStocks().first().size)
   }
 
   @Test fun repairPreservesBuiltinIdsCustomProfilesAndSavedExposures() = runBlocking {
@@ -84,7 +90,7 @@ class FilmStockDatabaseTest {
 
     val repaired = open()
     val profiles = repaired.filmStockDao().getAllFilmStocks().first()
-    assertEquals(28, profiles.size)
+    assertEquals(56, profiles.size)
     assertEquals(legacy.copy(reciprocityFactor = 1.0), profiles.single { it.id == 41 })
     assertEquals(custom, profiles.single { it.id == 87 })
     assertEquals(listOf(log), repaired.filmLogDao().getAllLogEntries().first())
@@ -106,7 +112,7 @@ class FilmStockDatabaseTest {
     old.close()
 
     val profiles = open().filmStockDao().getAllFilmStocks().first()
-    assertEquals(27, profiles.size)
+    assertEquals(55, profiles.size)
     legacy.forEach { previous ->
       val current = profiles.single { it.brand == previous.brand && it.name == previous.name }
       assertEquals(previous.id, current.id)
@@ -116,6 +122,46 @@ class FilmStockDatabaseTest {
       assertEquals(previous.badgeStyle, current.badgeStyle)
       assertTrue(current.hasReciprocityProfile)
     }
+  }
+
+  @Test fun expandedCatalogueKeepsSpeedsTypesAndUnknownProfilesExplicit() = runBlocking {
+    val stocks = open().filmStockDao().getAllFilmStocks().first()
+    val additions = listOf(
+      Triple("Kentmere", "Pan 200", 200), Triple("Ilford", "SFX 200", 200), Triple("Ilford", "Ortho Plus", 80),
+      Triple("Foma", "Fomapan 200", 200), Triple("Foma", "Fomapan 400", 400),
+      Triple("Foma", "Retropan 320", 320), Triple("Foma", "Ortho 400", 400), Triple("Foma", "Fomapan R 100", 100),
+      Triple("Rollei", "RPX 25", 25), Triple("Rollei", "RPX 100", 100), Triple("Rollei", "RPX 400", 400),
+      Triple("Rollei", "Retro 80S", 80), Triple("Rollei", "Retro 400S", 400), Triple("Rollei", "Superpan 200", 200),
+      Triple("Rollei", "Infrared 400", 400), Triple("Rollei", "Ortho 25 Plus", 25), Triple("CineStill", "BwXX", 250),
+      Triple("Harman", "Phoenix II 200", 200), Triple("Harman", "Phoenix 125", 125),
+      Triple("Harman", "RED 125", 125), Triple("Harman", "Switch Azure 125", 125),
+      Triple("Lomography", "Color Negative 100", 100), Triple("Lomography", "Color Negative 400", 400),
+      Triple("Lomography", "Color Negative 800", 800), Triple("Lomography", "Earl Grey 100", 100),
+      Triple("Lomography", "Lady Grey 400", 400), Triple("Lomography", "Potsdam Kino 100", 100),
+      Triple("Lomography", "Berlin Kino 400", 400)
+    )
+    assertEquals(28, additions.size)
+    for ((brand, name, iso) in additions) {
+      val stock = stocks.single { it.brand == brand && it.name == name }
+      assertEquals(iso, stock.iso)
+      assertEquals(brand != "Harman" && !name.startsWith("Color Negative"), stock.isBlackAndWhite)
+    }
+    assertFalse(stocks.single { it.name == "BwXX" }.hasReciprocityProfile)
+    assertFalse(stocks.single { it.name == "Fomapan R 100" }.hasReciprocityProfile)
+
+    val database = databases.last()
+    val oldCatalogue = stocks.filter { stock -> additions.none { it.first == stock.brand && it.second == stock.name } }
+    assertEquals(27, oldCatalogue.size)
+    stocks.filterNot { it in oldCatalogue }.forEach { database.filmStockDao().deleteFilmStockById(it.id) }
+    val custom = stocks.single { it.name == "BwXX" }.copy(id = 0, isCustom = true, description = "My own tests")
+    val customId = database.filmStockDao().insertFilmStock(custom).toInt()
+    database.close()
+
+    val reopened = open().filmStockDao().getAllFilmStocks().first()
+    assertEquals(56, reopened.size)
+    assertTrue(reopened.containsAll(oldCatalogue))
+    assertEquals(custom.copy(id = customId), reopened.single { it.id == customId })
+    assertEquals(1, reopened.count { it.brand == "CineStill" && it.name == "BwXX" && !it.isCustom })
   }
 
   @Test fun failedRepairRollsBackEverySeedAndProfileUpdate() = runBlocking {

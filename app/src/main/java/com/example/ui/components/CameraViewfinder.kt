@@ -16,6 +16,7 @@ import android.os.Build
 import android.os.SystemClock
 import android.provider.Settings
 import android.view.Surface
+import android.view.View
 import android.view.ViewOutlineProvider
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -26,6 +27,7 @@ import androidx.camera.camera2.interop.CaptureRequestOptions
 import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.DynamicRange
 import androidx.camera.core.Preview
 import androidx.camera.core.UseCaseGroup
 import androidx.camera.lifecycle.ProcessCameraProvider
@@ -112,7 +114,9 @@ fun CameraViewfinder(
   currentEv: Double = 12.0,
   viewportHeightDp: Int = 220,
   onCameraStatusChanged: (String?, Boolean) -> Unit = { _, _ -> },
-  onMeteringAreaChanged: () -> Unit = {}
+  onMeteringAreaChanged: () -> Unit = {},
+  isBlackAndWhite: Boolean = false,
+  onHeldFrameChanged: (Bitmap?) -> Unit = {}
 ) {
   val context = LocalContext.current
   val lifecycleOwner = LocalLifecycleOwner.current
@@ -128,10 +132,15 @@ fun CameraViewfinder(
     }
   }
   val heldFrame: HeldCameraFrame = viewModel { HeldCameraFrame() }
+  val monochromePaint = remember { monochromePreviewPaint() }
+  val displayedHeldFrame = remember(isLocked, heldFrame.bitmap, isBlackAndWhite) {
+    heldFrame.bitmap?.takeIf { isLocked }?.let { renderHeldCameraFrame(it, isBlackAndWhite) }
+  }
   val locked by rememberUpdatedState(isLocked)
   val onReading by rememberUpdatedState(onMeasuredEvChanged)
   val onStatus by rememberUpdatedState(onCameraStatusChanged)
   val onAreaChanged by rememberUpdatedState(onMeteringAreaChanged)
+  val onHeldFrame by rememberUpdatedState(onHeldFrameChanged)
   var hasPermission by remember {
     mutableStateOf(ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED)
   }
@@ -169,6 +178,10 @@ fun CameraViewfinder(
   }
 
   LaunchedEffect(cameraStatus, measuring) { onStatus(cameraStatus, measuring) }
+  LaunchedEffect(displayedHeldFrame) { onHeldFrame(displayedHeldFrame) }
+  DisposableEffect(previewView) {
+    onDispose { onHeldFrame(null) }
+  }
 
   DisposableEffect(lifecycleOwner) {
     val observer = LifecycleEventObserver { _, event ->
@@ -188,7 +201,8 @@ fun CameraViewfinder(
       heldFrame.bitmap = null
     } else if (heldFrame.bitmap == null) {
       repeat(4) {
-        previewView.bitmap?.let {
+        val snapshot = try { previewView.bitmap } catch (_: IllegalStateException) { null }
+        snapshot?.let {
           heldFrame.bitmap = it
           return@LaunchedEffect
         }
@@ -249,12 +263,29 @@ fun CameraViewfinder(
                 val cameraInfo = Camera2CameraInfo.from(cameraProvider.getCameraInfo(selector))
                 activeArray = cameraInfo.getCameraCharacteristic(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)
                 supportsFrameMetering = (cameraInfo.getCameraCharacteristic(CameraCharacteristics.CONTROL_MAX_REGIONS_AE) ?: 0) > 0
-                val builder = Preview.Builder().setPreviewStabilizationEnabled(false)
+                val builder = Preview.Builder().setDynamicRange(DynamicRange.SDR).setPreviewStabilizationEnabled(false)
                 val interop = Camera2Interop.Extender(builder)
+                  .setCaptureRequestOption(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
                   .setCaptureRequestOption(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
                   .setCaptureRequestOption(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, 0)
                   .setCaptureRequestOption(CaptureRequest.CONTROL_AE_LOCK, false)
                   .setCaptureRequestOption(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE, CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_OFF)
+                if (cameraInfo.getCameraCharacteristic(CameraCharacteristics.CONTROL_AVAILABLE_SCENE_MODES)
+                    ?.contains(CaptureRequest.CONTROL_SCENE_MODE_DISABLED) == true) {
+                  interop.setCaptureRequestOption(CaptureRequest.CONTROL_SCENE_MODE, CaptureRequest.CONTROL_SCENE_MODE_DISABLED)
+                }
+                if (cameraInfo.getCameraCharacteristic(CameraCharacteristics.CONTROL_AVAILABLE_EFFECTS)
+                    ?.contains(CaptureRequest.CONTROL_EFFECT_MODE_OFF) == true) {
+                  interop.setCaptureRequestOption(CaptureRequest.CONTROL_EFFECT_MODE, CaptureRequest.CONTROL_EFFECT_MODE_OFF)
+                }
+                if (cameraInfo.getCameraCharacteristic(CameraCharacteristics.EDGE_AVAILABLE_EDGE_MODES)
+                    ?.contains(CaptureRequest.EDGE_MODE_OFF) == true) {
+                  interop.setCaptureRequestOption(CaptureRequest.EDGE_MODE, CaptureRequest.EDGE_MODE_OFF)
+                }
+                if (cameraInfo.getCameraCharacteristic(CameraCharacteristics.NOISE_REDUCTION_AVAILABLE_NOISE_REDUCTION_MODES)
+                    ?.contains(CaptureRequest.NOISE_REDUCTION_MODE_OFF) == true) {
+                  interop.setCaptureRequestOption(CaptureRequest.NOISE_REDUCTION_MODE, CaptureRequest.NOISE_REDUCTION_MODE_OFF)
+                }
                 if (Build.VERSION.SDK_INT >= 28) {
                   val distortionModes = cameraInfo.getCameraCharacteristic(CameraCharacteristics.DISTORTION_CORRECTION_AVAILABLE_MODES)
                   val mode = distortionModes?.firstOrNull { it == CaptureRequest.DISTORTION_CORRECTION_MODE_FAST }
@@ -438,7 +469,11 @@ fun CameraViewfinder(
         AndroidView(
           factory = { previewView },
           // Native camera pixels must not remain live around the held bitmap.
-          update = { it.alpha = if (isLocked) 0f else 1f },
+          update = {
+            it.alpha = if (isLocked) 0f else 1f
+            it.setLayerType(if (isBlackAndWhite) View.LAYER_TYPE_HARDWARE else View.LAYER_TYPE_NONE,
+              if (isBlackAndWhite) monochromePaint else null)
+          },
           modifier = Modifier.fillMaxSize().onSizeChanged {
             val changed = previousFrameWidth > 0 && previousFrameHeight > 0 &&
               (previousFrameWidth != it.width || previousFrameHeight != it.height)
@@ -453,7 +488,7 @@ fun CameraViewfinder(
           }
         )
         if (isLocked) {
-          val bitmap = heldFrame.bitmap
+          val bitmap = displayedHeldFrame
           if (bitmap != null) {
             Image(bitmap.asImageBitmap(), contentDescription = "Held camera frame", modifier = Modifier.fillMaxSize(), contentScale = ContentScale.FillBounds)
           } else {

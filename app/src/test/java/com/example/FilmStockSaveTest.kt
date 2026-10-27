@@ -89,6 +89,18 @@ class FilmStockSaveTest {
     assertNull(model.filmAddedId.value)
   }
 
+  @Test fun invalidCustomFilmsAreRejectedBeforeStorage() {
+    val valid = FilmStock(name = "Custom", brand = "Test", iso = 100, type = "Black & White",
+      reciprocityFactor = 1.31, description = "Test", badgeStyle = "CUSTOM", isCustom = true)
+    listOf(valid.copy(name = " "), valid.copy(iso = 0), valid.copy(type = "Unknown"),
+      valid.copy(isCustom = false), valid.copy(reciprocityFactor = Double.NaN), valid.copy(reciprocityFactor = 100.0))
+      .forEach { model.addCustomFilmStock(it) }
+    dispatcher.scheduler.advanceUntilIdle()
+    assertTrue(stocks.attempts.isEmpty())
+    assertFalse(model.isAddingFilm.value)
+    assertNull(model.filmAddedId.value)
+  }
+
   private class PendingStocks : FilmStockDao {
     var result = CompletableDeferred<Long>()
     val attempts = mutableListOf<FilmStock>()
@@ -106,6 +118,8 @@ class FilmStockSaveTest {
     override fun getAllLogEntries() = MutableStateFlow(emptyList<FilmLogEntry>())
     override fun getEntriesForRoll(rollId: String) = MutableStateFlow(emptyList<FilmLogEntry>())
     override suspend fun getLatestEntryForRoll(rollId: String): FilmLogEntry? = null
+    override suspend fun getLogEntry(id: Int): FilmLogEntry? = null
+    override suspend fun updateLogPhoto(id: Int, name: String?) = Unit
     override suspend fun insertLogEntry(entry: FilmLogEntry) = 1L
     override suspend fun deleteEntryById(id: Int) = Unit
     override suspend fun updateLogNotes(id: Int, notes: String) = Unit

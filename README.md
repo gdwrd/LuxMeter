@@ -19,16 +19,20 @@
 
 1. Choose your film and shooting speed. In **Film & speed**, choose **Normal** or a push of **+1 to +4 stops**; the app previews the shooting EI and processing to request from your lab. A two-stop push of ISO 400 film meters at EI 1600. Apply with **Use for this roll**; closing the sheet discards your draft. Custom shooting ISO stays available and keeps the film's reciprocity profile without inferring a processing instruction. Optionally save a named camera setup with its real shutter speeds, aperture range, format and lens.
 2. Point the camera at the scene inside the outlined frame. Tap a subject to measure a selected area, or use **Meter centre**. **Whole frame** restores frame metering. The visible area is approximate phone metering, not a dedicated one-degree spot meter.
-3. Choose an aperture to get a shutter recommendation, or switch to shutter priority or manual exposure. The shutter you choose in those modes is the actual exposure duration; film correction is included when calculating aperture or exposure balance.
+3. Swipe the aperture or shutter control to move through your camera's supported settings; tap its value to open the full picker. Aperture priority chooses shutter, shutter priority chooses aperture, and manual exposure leaves both under your control. The shutter you choose is the actual exposure duration; film correction is included when calculating aperture or exposure balance. TalkBack exposes previous/next actions, and vertical scrolling does not change the exposure.
 4. Use **Exposure adjustments** for compensation in thirds of a stop and a filter on the film camera. Positive compensation gives more exposure. Filter and scene adjustments apply before film reciprocity correction and remain visibly labelled until reset.
 5. Tap **Hold reading** to freeze the exposure and camera preview. The complete held exposure stays beside Resume. Format, lens and measuring area stay locked until you resume.
-6. Optionally **Save frame**, with **Undo** if it was accidental. If correction is unavailable, **Record manual exposure** saves the actual settings you choose with a manual label.
+6. Optionally **Save frame**, with **Undo** if it was accidental. Camera saves automatically attach a small copy of the held viewfinder image. If the image cannot be saved, the exposure is still recorded and the app tells you the photo is missing. If correction is unavailable, **Record manual exposure** saves the actual settings you choose with a manual label.
+
+To log without metering, open **Rolls → a roll → Add shot**. Enter aperture and shutter (fractions such as `1/125` are accepted), with an optional note and photo from your library. No camera permission or meter reading is required. The record uses the opened roll's film, EI and camera without changing the meter setup. New rolls can choose film, custom film, camera and format directly in Rolls; use **Continue this roll** when you want to meter with that setup.
 
 The primary navigation is **Meter** and **Rolls**. Settings contains calibration, haptics, and film management. Sunny 16 is an explicit estimate tool. Depth of field expands on the meter; the long-exposure timer appears when needed.
 
 ## Metering and calibration
 
 Camera metering requests an auto-exposure region matching the outlined preview. It verifies the reported region and exposure convergence, then derives EV100 from the camera's reported shutter duration, sensitivity, aperture, and post-RAW gain. Missing data or unsupported region metering produces an unavailable state, not a fabricated reading.
+
+The preview explicitly requests SDR, disables supported scene/effect enhancements, edge enhancement and noise reduction, and keeps preview/video stabilization off. Ordinary camera exposure, focus, white balance and framing correction remain enabled. Black-and-white film, including custom film, gives a monochrome live view, held view and automatic reference image. These display changes do not alter the metering calculation. Phone processing is device-dependent: the preview is a composition aid, not a prediction of film latitude, spectral response or the final photograph.
 
 Phone camera auto-exposure remains a device-dependent estimate. Compare the phone against a reference meter before relying on it for film. Hold a camera or light-sensor reading, then use **Compare with a reference meter** in Settings to enter the reference aperture, shutter and ISO. The proposed offset replaces that measuring source's calibration; camera and sensor offsets are separate. A manual adjustment remains available. Lens framing is approximate and bounded by the phone's zoom capability. Frame geometry and exposure mathematics have unit coverage; a successful build does not establish hardware accuracy.
 
@@ -40,7 +44,7 @@ Calibration stays on the device and is excluded from backup and transfer. The ol
 
 ## Film correction limits
 
-The film picker includes 27 built-in presets with dimensional canister artwork in the app's light and dark themes. Search by film, brand or speed, filter color, black-and-white or slide film, and expand the grid to browse the complete library. Custom films remain available alongside the presets.
+The film picker includes 55 built-in presets with dimensional canister artwork in the app's light and dark themes, including additional Ilford, Kentmere, Foma, Rollei, CineStill, Harman and Lomography stocks. Search by film, brand or speed, filter color, black-and-white or slide film, and expand the grid to browse the complete library. Catalogue identity and long-exposure support are separate: films without a supported correction are explicitly marked unknown.
 
 HP5 and Delta 3200 use [Ilford's published powers](https://www.ilfordphoto.com/wp/wp-content/uploads/2024/05/Reciprocity-Failure-Compensation-v2.pdf). Tri-X uses [Kodak's published timed points](https://www.kodakprofessional.com/sites/default/files/wysiwyg/pro/resources/f4017_TriX.pdf), with estimated interpolation and a development-adjustment reminder. CineStill 800T uses its approximate power of 1.3 and explicitly asks you to bracket.
 
@@ -48,7 +52,7 @@ The additional presets support their stated ordinary-exposure ranges without inv
 
 Kodak color films have no manufacturer-supplied timed correction beyond their stated normal range. Superia and Velvia publish aperture corrections, and Velvia also needs color filtration. Outside a supported timed range, the app shows the metered value and guidance, suppresses the corrected recommendation, and disables timing and saving that recommendation. You can explicitly record a manually chosen exposure instead. Corrected exposures and the foreground timer are limited to one day.
 
-An unlisted film needs only its name and ISO; film type and brand can be supplied. Its correction starts as **Unknown**. An optional tested power-law profile can use your own exponent. **Film details** distinguishes manufacturer guidance, estimates and your tested profile, with supported ranges and source links. Unknown profiles never invent a corrected duration.
+Use **Add custom film** in the film picker or new-roll flow (also available in Settings). Supply its name, box ISO and type; brand is optional. Its correction starts as **Unknown**. An optional tested power-law profile can use your own exponent. Saving selects the new film in the current draft; it does not change the meter until you apply the draft. **Film details** distinguishes manufacturer guidance, estimates and your tested profile, with supported ranges and source links. Unknown profiles never invent a corrected duration.
 
 ## Remembered setup and rolls
 
@@ -62,11 +66,13 @@ Push processing is a roll setting, separate from exposure compensation and filte
 
 Push choices record your intended processing; they do not supply development times or certify that a film/lab combination supports the push. Long-exposure correction continues to use the film profile and its existing limits.
 
-Calculated saving requires a valid held reading and supported correction. Manual records are clearly marked and include reference meter data only when a reading is held. Both reject repeated taps and confirm only after storage succeeds. The frame and physical counter commit together. The version 1 to 2 migration preserves existing profiles, record IDs and exposure snapshots, and adopts the active roll from its remembered setup. Built-in profile repair still completes transactionally before queries.
+Calculated saving requires a valid held reading and supported correction. Manual records are clearly marked; manual records from Rolls never inherit a meter reading. The meter's manual fallback includes reference data only when a reading is held. Saves reject repeated taps and confirm only after storage succeeds. The frame and physical counter commit together. Migrations from database versions 1–3 to version 4 preserve profiles, record IDs, rolls and exposure snapshots; existing records start without a reference image. Built-in profile repair still completes transactionally before queries.
 
 Deleting a saved record preserves the roll's physical frame counter. Undo reverses the most recent accidental save. Custom-film drafts remain available after a failed insert; locale decimal separators are accepted.
 
-Tap a saved frame to edit its note without changing exposure data. **Share roll as CSV** opens Android's share sheet with a local file containing frame settings, camera/lens, adjustments, correction provenance, notes and UTC timestamps. Text is escaped for CSV and protected against spreadsheet formula interpretation. No account or upload service is required.
+Tap a saved frame to edit its note or add, replace or remove its reference photo without changing exposure data. Photos are orientation-corrected JPEGs with a maximum 512-pixel long edge, kept in private app storage without the source image's metadata. Deleting a frame or roll, or undoing a save, removes its associated image. Missing images after restore show a placeholder and can be replaced.
+
+Reference photos are excluded from Android cloud backup so image growth cannot consume the 25 MB quota used by the exposure logs. Android 12+ device transfers include photos; older Android backup rules also exclude them from device transfer. Cloud-restored logs therefore retain their exposure data but may lack photos. **Share roll as CSV** exports settings and notes, not photos or private image paths: frame settings, camera/lens, adjustments, correction provenance, notes and UTC timestamps. Text is escaped for CSV and protected against spreadsheet formula interpretation. No account or upload service is required.
 
 The timer compensates for delayed UI frames and configuration changes using elapsed time. Start and close the real camera's shutter separately. Keep the timer screen open while timing; it is not a background alarm service.
 
@@ -87,6 +93,8 @@ GitHub Actions runs unit tests, lint, a debug build, and the full Android UI tes
 Tests cover exposure and depth-of-field calculations, selected-area camera crop/rotation/zoom geometry, metadata validation, source isolation and calibration, camera limits/Bulb, exposure/filter adjustments, held readings, loaded rolls, manual and calculated saving, notes/export, migration and transactional rollback, profile repair, backup exclusions, locale inputs, Sunny 16 choices, timer timing, and readable exposure controls.
 
 Before relying on a release, verify camera permission/retry, frame alignment, rotation, held previews, daylight/low-light readings, font scaling, TalkBack, and calibration on physical devices.
+
+`CameraHardwareInstrumentedTest` is opt-in with the instrumentation argument `hardwareCamera=true`, camera permission and a well-lit scene. It checks real preview pixels, held snapshots, swipe controls and automatic photo saving. Use a dedicated test installation or back up Preview's data first: its temporary rolls/photos are removed, but meter preferences change. Ordinary emulator runs skip these hardware checks.
 
 ## GitHub releases
 

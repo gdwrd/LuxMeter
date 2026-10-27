@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <full-backup-content>
     <exclude domain="sharedpref" path="meter_device_calibration.xml" />
+    <!-- Older Android cannot keep these default rules separate for cloud and device transfer. -->
+    <exclude domain="file" path="shot-photos/" />
 </full-backup-content>

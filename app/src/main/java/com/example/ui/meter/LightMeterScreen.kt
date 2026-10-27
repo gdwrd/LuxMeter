@@ -1,5 +1,6 @@
 package com.example.ui.meter
 
+import android.graphics.Bitmap
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -45,6 +46,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -67,6 +69,8 @@ import com.example.data.model.processingLabel
 import com.example.sensor.DepthOfFieldCalculator
 import com.example.sensor.ExposureCalculator
 import com.example.ui.components.CameraViewfinder
+import com.example.ui.components.AddFilmDialog
+import com.example.ui.components.ExposureDial
 import com.example.ui.components.ExposureTimerDialog
 import com.example.ui.components.ExposureAdjustmentsDialog
 import com.example.ui.components.FilmDetailsDialog
@@ -89,6 +93,7 @@ fun LightMeterScreen(
   val lifecycleOwner = LocalLifecycleOwner.current
   val compactViewfinderHeight = (LocalConfiguration.current.screenHeightDp - 700).coerceIn(160, 280)
   val view = LocalView.current
+  val compactDials = LocalConfiguration.current.screenWidthDp < 420 && LocalDensity.current.fontScale < 1.5f
   val lux by viewModel.sensorManager.lux.collectAsStateWithLifecycle()
   val source by viewModel.measurementSource.collectAsStateWithLifecycle()
   val status by viewModel.readingStatus.collectAsStateWithLifecycle()
@@ -112,6 +117,8 @@ fun LightMeterScreen(
   val showFilm by viewModel.showStockPickerSheet.collectAsStateWithLifecycle()
   val showTimer by viewModel.showTimerDialog.collectAsStateWithLifecycle()
   val stocks by viewModel.allStocks.collectAsStateWithLifecycle()
+  val addingFilm by viewModel.isAddingFilm.collectAsStateWithLifecycle()
+  val filmAddedId by viewModel.filmAddedId.collectAsStateWithLifecycle()
   val cameraSetup by viewModel.currentCameraSetup.collectAsStateWithLifecycle()
   val cameraSetups by viewModel.allCameraSetups.collectAsStateWithLifecycle()
   val roll by viewModel.currentRoll.collectAsStateWithLifecycle()
@@ -124,6 +131,8 @@ fun LightMeterScreen(
   var showFilmDetails by rememberSaveable { mutableStateOf(false) }
   var showManualRecord by rememberSaveable { mutableStateOf(false) }
   var freshManualFrame by rememberSaveable { mutableStateOf(false) }
+  var showAddFilm by rememberSaveable { mutableStateOf(false) }
+  var heldPhoto by remember { mutableStateOf<Bitmap?>(null) }
 
   val iso = customIso ?: stock?.iso ?: 400
   val held = status == ReadingStatus.HELD
@@ -170,6 +179,9 @@ fun LightMeterScreen(
       showManualRecord = false
     }
   }
+  LaunchedEffect(filmAddedId) {
+    if (filmAddedId != null) showAddFilm = false
+  }
 
   val preview: @Composable (Int) -> Unit = { viewportHeight ->
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -210,7 +222,9 @@ fun LightMeterScreen(
             onMeasuredEvChanged = { ev -> viewModel.onOpticalEvMeasured(ev, format, focalLength) },
             onCameraStatusChanged = viewModel::setCameraStatus,
             onMeteringAreaChanged = viewModel::invalidateCameraReading,
-            viewportHeightDp = viewportHeight
+            viewportHeightDp = viewportHeight,
+            isBlackAndWhite = stock?.isBlackAndWhite ?: (roll?.filmType == "Black & White"),
+            onHeldFrameChanged = { heldPhoto = it }
           )
       } else {
         Surface(
@@ -264,7 +278,15 @@ fun LightMeterScreen(
         enabled = !saving,
         onPickAperture = { picker = "aperture" },
         onPickShutter = { picker = "shutter" },
-        resultLabel = if (showMeteredOnly) "Metered shutter" else if (requiresBulb) "Bulb exposure" else null
+        resultLabel = if (showMeteredOnly) "Metered shutter" else if (requiresBulb) "Bulb exposure" else null,
+        apertureControl = {
+          ExposureDial("Aperture", apertureLabels, apertureIndex, !saving,
+            viewModel::setApertureIndex, { picker = "aperture" }, { viewModel.hapticManager.performDialClick(view) }, compactDials)
+        },
+        shutterControl = {
+          ExposureDial("Shutter", shutterLabels, shutterIndex, !saving,
+            viewModel::setShutterIndex, { picker = "shutter" }, { viewModel.hapticManager.performDialClick(view) }, compactDials)
+        }
       )
 
       FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -399,7 +421,7 @@ fun LightMeterScreen(
           verticalAlignment = Alignment.CenterVertically
         ) {
           FilledTonalButton(
-            onClick = { viewModel.setShowStockPickerSheet(true) },
+            onClick = { viewModel.clearFilmAddedReceipt(); viewModel.setShowStockPickerSheet(true) },
             enabled = ready && !saving,
             modifier = Modifier.weight(1f).heightIn(min = 52.dp),
             shape = MaterialTheme.shapes.large,
@@ -451,7 +473,7 @@ fun LightMeterScreen(
         }
         if (held && savedEntry == null) {
           OutlinedButton(
-            onClick = { viewModel.logExposure() },
+            onClick = { viewModel.logExposure(photo = heldPhoto.takeIf { source == MeasurementSource.CAMERA }) },
             enabled = ready && !saving && exposureSupported && canSaveRoll,
             modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)
           ) {
@@ -508,8 +530,13 @@ fun LightMeterScreen(
       hapticManager = viewModel.hapticManager,
       onApply = viewModel::applyFilmSettings,
       needsConfirmation = viewModel::needsFilmSettingsConfirmation,
-      onDismiss = { viewModel.setShowStockPickerSheet(false) }
+      onDismiss = { viewModel.setShowStockPickerSheet(false) },
+      onAddCustomFilm = { viewModel.clearFilmAddedReceipt(); showAddFilm = true },
+      newFilmId = filmAddedId
     )
+  }
+  if (showAddFilm) {
+    AddFilmDialog(addingFilm, { showAddFilm = false }, viewModel::addCustomFilmStock)
   }
   if (showAdjustments) {
     ExposureAdjustmentsDialog(
@@ -527,8 +554,11 @@ fun LightMeterScreen(
       initialAperture = aperture,
       initialSeconds = if (freshManualFrame) 0.0 else correctedSeconds ?: rawSeconds ?: selectedSeconds,
       saving = saving,
-      onSave = viewModel::recordManualExposure,
-      onDismiss = { showManualRecord = false }
+      onSave = { apertureValue, seconds, notes -> viewModel.recordManualExposure(apertureValue, seconds, notes) },
+      onDismiss = { showManualRecord = false },
+      onSaveWithPhoto = { apertureValue, seconds, notes, uri ->
+        viewModel.recordManualExposure(apertureValue, seconds, notes, uri)
+      }
     )
   }
   if (showTimer) {
@@ -608,7 +638,9 @@ internal fun ExposureReadout(
   enabled: Boolean,
   onPickAperture: () -> Unit,
   onPickShutter: () -> Unit,
-  resultLabel: String? = null
+  resultLabel: String? = null,
+  apertureControl: (@Composable () -> Unit)? = null,
+  shutterControl: (@Composable () -> Unit)? = null
 ) {
   val manual = mode == ExposureMode.MANUAL_MATCH
   val choosingAperture = mode == ExposureMode.APERTURE_PRIORITY
@@ -642,13 +674,13 @@ internal fun ExposureReadout(
     val inputs: @Composable () -> Unit = {
       Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         if (choosingAperture || manual) {
-          Column {
+          if (apertureControl != null) apertureControl() else Column {
             Text("Aperture", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             FilledTonalButton(onClick = onPickAperture, enabled = enabled, modifier = Modifier.heightIn(min = 48.dp)) { Text(apertureLabel) }
           }
         }
         if (!choosingAperture || manual) {
-          Column {
+          if (shutterControl != null) shutterControl() else Column {
             Text("Shutter", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             FilledTonalButton(onClick = onPickShutter, enabled = enabled, modifier = Modifier.heightIn(min = 48.dp)) { Text(shutterLabel) }
           }

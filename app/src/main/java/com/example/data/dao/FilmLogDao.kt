@@ -18,11 +18,17 @@ interface FilmLogDao {
   @Query("SELECT * FROM film_log_entries WHERE rollId = :rollId ORDER BY frameNumber DESC LIMIT 1")
   suspend fun getLatestEntryForRoll(rollId: String): FilmLogEntry?
 
+  @Query("SELECT * FROM film_log_entries WHERE id = :id")
+  suspend fun getLogEntry(id: Int): FilmLogEntry?
+
   @Insert(onConflict = OnConflictStrategy.REPLACE)
   suspend fun insertLogEntry(entry: FilmLogEntry): Long
 
   @Query("UPDATE film_log_entries SET notes = :notes WHERE id = :id")
   suspend fun updateLogNotes(id: Int, notes: String)
+
+  @Query("UPDATE film_log_entries SET photoFileName = :name WHERE id = :id")
+  suspend fun updateLogPhoto(id: Int, name: String?)
 
   @Query("DELETE FROM film_log_entries WHERE id = :id")
   suspend fun deleteEntryById(id: Int)

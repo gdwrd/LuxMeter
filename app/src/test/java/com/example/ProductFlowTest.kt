@@ -2,6 +2,8 @@ package com.example
 
 import android.app.Application
 import android.content.Context
+import android.graphics.Bitmap
+import android.net.Uri
 import androidx.lifecycle.ViewModelStore
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.dao.FilmLogDao
@@ -32,8 +34,10 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
 import kotlin.math.log2
 import kotlin.math.pow
+import java.io.File
 
 @OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(RobolectricTestRunner::class)
@@ -61,6 +65,16 @@ class ProductFlowTest {
   }
 
   private fun drain() = dispatcher.scheduler.advanceUntilIdle()
+
+  private fun finishSave(model: LightMeterViewModel) {
+    val deadline = System.nanoTime() + 5_000_000_000L
+    do {
+      drain()
+      if (!model.isSaving.value) return
+      Thread.sleep(5)
+    } while (System.nanoTime() < deadline)
+    assertFalse("Photo IO should complete", model.isSaving.value)
+  }
 
   private fun meter(): LightMeterViewModel = LightMeterViewModel(application, repository).also { model ->
     stores += ViewModelStore().also { it.put("meter", model) }
@@ -587,6 +601,203 @@ class ProductFlowTest {
     assertNull(model.pushStops.value)
   }
 
+  @Test fun manualShotsTargetTheirRollWithoutChangingTheHeldMeterAndCanRepeatAndUndo() {
+    val model = meter()
+    model.setFilmStock(stocks.hp5)
+    model.setExposureCompensation(1.0)
+    model.onOpticalEvMeasured(12.0)
+    model.toggleHold()
+    model.logExposure()
+    drain()
+    val heldReceipt = model.savedEntry.value!!
+    assertTrue(model.userMessage.value!!.contains("saved without a photo"))
+    val activeRoll = model.currentRoll.value
+    val targetCamera = CameraSetup(name = "Other camera", format = CameraFormat.MEDIUM_66.name, focalLengthMm = 80)
+    val cameraId = runBlocking { repository.saveCameraSetup(targetCamera).toInt() }
+    val target = FilmRoll(id = "manual-target", name = "Manual roll", filmStockName = "Other film",
+      iso = 800, boxIso = 400, pushStops = 1, format = CameraFormat.MEDIUM_66.name,
+      cameraSetupId = cameraId, focalLengthMm = 80, lastFrameNumber = 3, frameCapacity = 12)
+    runBlocking { repository.saveRoll(target) }
+
+    model.recordManualExposureForRoll(target.id, 8.0, 1.0 / 125, "Red door")
+    drain()
+    val first = model.manualSavedEntry.value!!
+    assertEquals(4, first.frameNumber)
+    assertEquals(800, first.iso)
+    assertEquals("Other film", first.filmStockName)
+    assertEquals("Other camera", first.cameraName)
+    assertEquals("6×6", first.format)
+    assertTrue(first.isManual)
+    assertFalse(first.hasMeterReading)
+    assertEquals("", first.meteringSource)
+    assertEquals(0.0, first.rawSeconds, 0.0)
+    assertEquals(0.0, first.exposureCompensation, 0.0)
+    assertEquals(0f, first.calibrationEv, 0f)
+    assertEquals(heldReceipt, model.savedEntry.value)
+    assertEquals(activeRoll, model.currentRoll.value)
+    assertEquals(ReadingStatus.HELD, model.readingStatus.value)
+    assertEquals(1.0, model.exposureCompensation.value, 0.0)
+    model.recordManualExposureForRoll(target.id, 8.0, 1.0 / 125)
+    drain()
+    assertEquals(1, logs.entries.value.count { it.rollId == target.id })
+
+    model.clearManualSavedReceipt()
+    model.recordManualExposureForRoll(target.id, 5.6, 0.5)
+    drain()
+    assertEquals(5, model.manualSavedEntry.value!!.frameNumber)
+    model.undoManualSavedExposure()
+    drain()
+    assertNull(model.manualSavedEntry.value)
+    assertEquals(listOf(first), logs.entries.value.filter { it.rollId == target.id })
+    assertEquals(4, runBlocking { repository.getRoll(target.id) }!!.lastFrameNumber)
+    assertEquals(activeRoll, model.currentRoll.value)
+    assertEquals(heldReceipt, model.savedEntry.value)
+  }
+
+  @Test fun manualRollSaveRejectsDuplicatesAndKeepsCounterOnFailureOrClosedRoll() {
+    val model = meter()
+    val target = FilmRoll(id = "manual-failure", name = "Manual", frameCapacity = 1)
+    runBlocking { repository.saveRoll(target) }
+    logs.gate = CompletableDeferred()
+    model.recordManualExposureForRoll(target.id, 8.0, 0.008, "Keep draft")
+    model.recordManualExposureForRoll(target.id, 8.0, 0.008, "Duplicate")
+    dispatcher.scheduler.runCurrent()
+    assertEquals(1, logs.insertAttempts)
+    assertEquals(0, runBlocking { repository.getRoll(target.id) }!!.lastFrameNumber)
+    logs.gate!!.completeExceptionally(IllegalStateException("Disk unavailable"))
+    drain()
+    assertNull(model.manualSavedEntry.value)
+    assertTrue(logs.entries.value.isEmpty())
+    assertEquals(target, runBlocking { repository.getRoll(target.id) })
+    logs.gate = null
+    model.recordManualExposureForRoll(target.id, 8.0, 0.008, "Keep draft")
+    drain()
+    assertEquals("Keep draft", model.manualSavedEntry.value!!.notes)
+    model.clearManualSavedReceipt()
+    model.recordManualExposureForRoll(target.id, 8.0, 0.008)
+    drain()
+    assertNull(model.manualSavedEntry.value)
+    assertEquals(1, logs.entries.value.size)
+    runBlocking { repository.saveRoll(target.copy(isFinished = true)) }
+    model.recordManualExposureForRoll(target.id, 8.0, 0.008)
+    drain()
+    assertNull(model.manualSavedEntry.value)
+    assertTrue(model.userMessage.value!!.contains("Reopen"))
+  }
+
+  @Test fun creatingRollFromDraftPreservesMeterAndStoresItsOwnFilmCameraAndProcessing() {
+    val model = meter()
+    model.setFilmStock(stocks.unknown)
+    model.onOpticalEvMeasured(10.0)
+    model.toggleHold()
+    val current = model.currentRoll.value
+    val camera = CameraSetup(name = "Square", format = CameraFormat.MEDIUM_66.name, focalLengthMm = 80)
+    val savedCamera = camera.copy(id = runBlocking { repository.saveCameraSetup(camera).toInt() })
+    model.createRoll("  Weekend  ", 12, stocks.hp5, savedCamera, CameraFormat.MEDIUM_66, 80, 1600, 2)
+    drain()
+    val created = runBlocking { repository.getRoll(model.createdRollId.value!!) }!!
+    assertEquals("Weekend", created.name)
+    assertEquals(stocks.hp5.id, created.filmStockId)
+    assertEquals("Black & White", created.filmType)
+    assertEquals(1600, created.iso)
+    assertEquals(2, created.pushStops)
+    assertEquals(savedCamera.id, created.cameraSetupId)
+    assertEquals(12, created.frameCapacity)
+    assertEquals(current, model.currentRoll.value)
+    assertEquals(stocks.unknown, model.selectedFilmStock.value)
+    assertEquals(ReadingStatus.HELD, model.readingStatus.value)
+    model.clearCreatedRollReceipt()
+    assertNull(model.createdRollId.value)
+    model.createRoll("Invalid push", 12, stocks.hp5, null, CameraFormat.MEDIUM_66, 80, 800, 5)
+    drain()
+    assertNull(model.createdRollId.value)
+    model.createRoll("Custom EI", 12, stocks.hp5, null, CameraFormat.MEDIUM_66, 80, 800, 2)
+    drain()
+    val custom = runBlocking { repository.getRoll(model.createdRollId.value!!) }!!
+    assertEquals(800, custom.iso)
+    assertEquals(2, custom.pushStops)
+    assertEquals(current, model.currentRoll.value)
+  }
+
+  @Test
+  @Config(sdk = [28])
+  @GraphicsMode(GraphicsMode.Mode.NATIVE)
+  fun photoFailureStillSavesShotAndPhotoEditsAndUndoCleanOwnedFiles() {
+    val model = meter()
+    val target = FilmRoll(id = "photo-target", name = "Photo roll")
+    runBlocking { repository.saveRoll(target) }
+    model.recordManualExposureForRoll(target.id, 8.0, 0.008, photoUri = Uri.parse("file:///missing-shot-photo.jpg"))
+    finishSave(model)
+    val first = model.manualSavedEntry.value!!
+    assertNull(first.photoFileName)
+    assertTrue(model.userMessage.value!!.contains("saved without a photo"))
+    val bitmap = Bitmap.createBitmap(32, 24, Bitmap.Config.ARGB_8888)
+    val source = File(application.cacheDir, "photo-source.png")
+    source.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+    model.updateLogPhoto(first.id, Uri.fromFile(source))
+    finishSave(model)
+    val withPhoto = logs.entries.value.single()
+    val photoFile = model.photoFile(withPhoto.photoFileName)!!
+    assertTrue(photoFile.exists())
+    model.updateLogPhoto(first.id, Uri.parse("file:///missing-replacement.jpg"))
+    finishSave(model)
+    assertEquals(withPhoto.photoFileName, logs.entries.value.single().photoFileName)
+    assertTrue(photoFile.exists())
+    model.undoManualSavedExposure()
+    finishSave(model)
+    assertTrue(logs.entries.value.isEmpty())
+    assertFalse(photoFile.exists())
+    assertEquals(0, runBlocking { repository.getRoll(target.id) }!!.lastFrameNumber)
+    bitmap.recycle()
+    source.delete()
+  }
+
+  @Test fun rollKeepsBlackAndWhiteTypeAfterItsCustomFilmIsDeleted() {
+    val model = meter()
+    val custom = stocks.unknown.copy(id = 0, name = "Custom monochrome", type = "Black & White")
+    val stored = custom.copy(id = runBlocking { repository.insertStock(custom).toInt() })
+    model.createRoll("Monochrome", 36, stored, null, CameraFormat.FORMAT_35MM, 50, 100, 0)
+    drain()
+    val id = model.createdRollId.value!!
+    model.deleteFilmStock(stored.id)
+    drain()
+    model.continueRoll(id)
+    drain()
+    assertNull(model.selectedFilmStock.value)
+    assertEquals("Black & White", model.currentRoll.value!!.filmType)
+    assertEquals("Black & White", runBlocking { repository.getRoll(id) }!!.filmType)
+  }
+
+  @Test
+  @Config(sdk = [28])
+  @GraphicsMode(GraphicsMode.Mode.NATIVE)
+  fun failedShotInsertRemovesNewPhotoAndDeletingRecordKeepsPhysicalCounter() {
+    val model = meter()
+    val target = FilmRoll(id = "photo-failure", name = "Photo failure")
+    runBlocking { repository.saveRoll(target) }
+    val bitmap = Bitmap.createBitmap(32, 24, Bitmap.Config.ARGB_8888)
+    val source = File(application.cacheDir, "failed-photo-source.png")
+    source.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+    val directory = File(application.filesDir, "shot-photos")
+    val before = directory.listFiles().orEmpty().map { it.name }.toSet()
+    logs.gate = CompletableDeferred<Unit>().also { it.completeExceptionally(IllegalStateException("Disk unavailable")) }
+    model.recordManualExposureForRoll(target.id, 8.0, 0.008, photoUri = Uri.fromFile(source))
+    finishSave(model)
+    assertTrue(logs.entries.value.isEmpty())
+    assertEquals(before, directory.listFiles().orEmpty().map { it.name }.toSet())
+    logs.gate = null
+    model.recordManualExposureForRoll(target.id, 8.0, 0.008, photoUri = Uri.fromFile(source))
+    finishSave(model)
+    val saved = model.manualSavedEntry.value!!
+    val owned = model.photoFile(saved.photoFileName)!!
+    model.deleteLogEntry(saved.id)
+    finishSave(model)
+    assertFalse(owned.exists())
+    assertEquals(1, runBlocking { repository.getRoll(target.id) }!!.lastFrameNumber)
+    bitmap.recycle()
+    source.delete()
+  }
+
   private class Stocks : FilmStockDao {
     val hp5 = FilmStock(1, "HP5 Plus 400", "Ilford", 400, "Black & White", 1.31,
       description = "Test", badgeStyle = "HP5")
@@ -612,6 +823,10 @@ class ProductFlowTest {
     override fun getAllLogEntries() = entries
     override fun getEntriesForRoll(rollId: String) = entries.map { list -> list.filter { it.rollId == rollId } }
     override suspend fun getLatestEntryForRoll(rollId: String) = entries.value.filter { it.rollId == rollId }.maxByOrNull { it.frameNumber }
+    override suspend fun getLogEntry(id: Int) = entries.value.firstOrNull { it.id == id }
+    override suspend fun updateLogPhoto(id: Int, name: String?) {
+      entries.value = entries.value.map { if (it.id == id) it.copy(photoFileName = name) else it }
+    }
     override suspend fun insertLogEntry(entry: FilmLogEntry): Long {
       insertAttempts++
       gate?.await()

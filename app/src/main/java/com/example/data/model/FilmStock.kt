@@ -23,6 +23,10 @@ data class FilmStock(
   val isCustom: Boolean = false,
   @ColumnInfo(defaultValue = "1") val hasReciprocityProfile: Boolean = true
 ) {
+  @get:Ignore
+  val isBlackAndWhite: Boolean
+    get() = type == "Black & White"
+
   fun isoForPush(stops: Int): Int? {
     if (iso <= 0 || stops !in 0..4) return null
     return (iso.toLong() * (1L shl stops)).takeIf { it <= 102400L }?.toInt()
@@ -47,8 +51,10 @@ data class FilmStock(
   val sourceUrl: String?
     get() = when (profile()) {
       "Ilford/HP5 Plus 400", "Ilford/Delta 3200", "Ilford/FP4 Plus", "Ilford/Delta 100",
-      "Ilford/Delta 400", "Ilford/Pan F Plus", "Ilford/XP2 Super", "Kentmere/Pan 100", "Kentmere/Pan 400" ->
+      "Ilford/Delta 400", "Ilford/Pan F Plus", "Ilford/XP2 Super", "Ilford/SFX 200", "Ilford/Ortho Plus",
+      "Kentmere/Pan 100", "Kentmere/Pan 400" ->
         "https://www.ilfordphoto.com/wp/wp-content/uploads/2024/05/Reciprocity-Failure-Compensation-v2.pdf"
+      "Kentmere/Pan 200" -> "https://www.ilfordphoto.com/wp/wp-content/uploads/2025/05/KENTMERE-PAN-200-260325.pdf"
       "Kodak/Tri-X 400" -> "https://www.kodakprofessional.com/sites/default/files/wysiwyg/pro/resources/f4017_TriX.pdf"
       "CineStill/CineStill 800T", "CineStill/50D", "CineStill/400D" -> "https://help.cinestillfilm.com/hc/en-us/articles/4407453578893-What-are-the-reciprocity-failure-details-for-CineStill-films"
       "Kodak/Portra 400" -> "https://www.kodakprofessional.com/sites/default/files/wysiwyg/pro/resources/e4050_portra_400.pdf"
@@ -65,6 +71,28 @@ data class FilmStock(
       "Fujifilm/Velvia 50" -> "https://www.fujifilm.com.hk/products/professional_films/pdf/velvia_50_datasheet.pdf"
       "Fujifilm/Acros II" -> "https://asset.fujifilm.com/www/us/files/2020-08/73080443d0289b1a7b116add14a9bdfc/films_neopan100acros2_135_01_0.pdf"
       "Foma/Fomapan 100" -> "https://www.foma.cz/en/fomapan-100"
+      "Foma/Fomapan 200" -> "https://www.foma.cz/en/fomapan-200"
+      "Foma/Fomapan 400" -> "https://www.foma.cz/en/fomapan-400"
+      "Foma/Retropan 320" -> "https://www.foma.cz/en/retropan320"
+      "Foma/Ortho 400" -> "https://www.foma.cz/en/fomaortho"
+      "Foma/Fomapan R 100" -> "https://www.foma.cz/en/fomapan-R-100"
+      "Rollei/RPX 25" -> "https://www.rolleianalog.com/products/rollei-rpx-25/?lang=en"
+      "Rollei/RPX 100" -> "https://www.rolleianalog.com/products/rollei-rpx-100/?lang=en"
+      "Rollei/RPX 400" -> "https://www.rolleianalog.com/products/rollei-rpx-400/?lang=en"
+      "Rollei/Retro 80S" -> "https://www.rolleianalog.com/products/rollei-retro-80s/?lang=en"
+      "Rollei/Retro 400S" -> "https://www.rolleianalog.com/products/rollei-retro-400s/?lang=en"
+      "Rollei/Superpan 200" -> "https://www.rolleianalog.com/products/rollei-superpan-200/?lang=en"
+      "Rollei/Infrared 400" -> "https://www.rolleianalog.com/rollei-infrared/?lang=en"
+      "Rollei/Ortho 25 Plus" -> "https://www.rolleianalog.com/products/rollei-ortho-25-plus/?lang=en"
+      "CineStill/BwXX" -> "https://help.cinestillfilm.com/hc/en-us/articles/360025489552-What-is-CineStill-BwXX-and-what-EI-ISO-should-I-rate-it-at"
+      "Harman/Phoenix II 200" -> "https://www.harmanphoto.co.uk/amfile/file/download/file/1968/product/2208/"
+      "Harman/Phoenix 125" -> "https://www.harmanphoto.co.uk/amfile/file/download/file/1973/product/2277/"
+      "Harman/RED 125" -> "https://www.harmanphoto.co.uk/amfile/file/download/file/1965/product/2170/"
+      "Harman/Switch Azure 125" -> "https://www.harmanphoto.co.uk/amfile/file/download/file/1969/product/2229/"
+      "Lomography/Color Negative 100", "Lomography/Color Negative 400", "Lomography/Color Negative 800" ->
+        "https://www.lomography.com/magazine/346332-a-guide-for-newbies-using-lomography-films-effectively-pt-ii"
+      "Lomography/Earl Grey 100", "Lomography/Lady Grey 400", "Lomography/Potsdam Kino 100", "Lomography/Berlin Kino 400" ->
+        "https://www.lomography.com/magazine/357064-tipster-lomography-black-white-film-comparison-guide"
       else -> null
     }
 
@@ -74,7 +102,10 @@ data class FilmStock(
       !hasReciprocityProfile -> "No timed correction supplied. You can record the settings you choose."
       isCustom -> "Your t^$reciprocityFactor correction above ${reciprocityThresholdSec}s; the app limits timing to one day."
       else -> when (profile()) {
-        "Ilford/HP5 Plus 400", "Ilford/Delta 3200" -> "No correction through 1s; manufacturer's power correction above 1s. App limit: one day."
+        "Ilford/HP5 Plus 400", "Ilford/Delta 3200", "Ilford/SFX 200", "Ilford/Ortho Plus" ->
+          "No correction through 1s; manufacturer's power correction above 1s. App limit: one day."
+        "Kentmere/Pan 200", "Harman/Phoenix II 200", "Harman/Switch Azure 125" ->
+          "No correction from 1/10,000s to 1s; manufacturer's power correction above 1s. App limit: one day."
         "Kodak/Tri-X 400" -> "Timed correction for 1/1000s–100s metered. Development changes may also be needed."
         "CineStill/CineStill 800T" -> "Approximate t^1.3 above 1s. Bracket exposures; this is not a validated time table."
         "Kodak/Portra 400", "Kodak/Gold 200", "Kodak/Ektar 100", "Kodak/Portra 160", "Kodak/Portra 800", "Kodak/UltraMax 400" ->
@@ -86,7 +117,8 @@ data class FilmStock(
         "Ilford/FP4 Plus", "Ilford/Delta 100", "Ilford/Delta 400", "Ilford/Pan F Plus", "Ilford/XP2 Super",
         "Kentmere/Pan 100", "Kentmere/Pan 400" -> "No correction through 1s. Longer timed correction is not included; consult the manufacturer's guidance."
         "CineStill/50D", "CineStill/400D" -> "Ordinary exposure through 1s, following CineStill's short-exposure guidance. Longer timed correction is not included; bracket and test exposures."
-        "Foma/Fomapan 100" -> "No correction from 1/1000s to 1/2s. Longer timed correction is not included; check Foma's exposure table."
+        "Foma/Fomapan 100", "Foma/Fomapan 200", "Foma/Fomapan 400", "Foma/Retropan 320", "Foma/Ortho 400" ->
+          "No correction from 1/1000s to 1/2s. Longer timed correction is not included; check Foma's exposure table."
         "Fujifilm/Acros II" -> "No correction below 120s. At 120s and longer, consult Fujifilm's aperture-correction guidance; no timed correction is included."
         "Fujifilm/Superia X-TRA 400" -> "No correction from 1/4000s to 2s. Longer exposures need Fujifilm's aperture guidance."
         "Fujifilm/Velvia 50" -> "No correction from 1/4000s to 1s. Longer exposures need aperture and magenta-filter guidance."
@@ -108,6 +140,11 @@ data class FilmStock(
       // Ilford's published Tc = Tm^P factors apply above one second.
       "Ilford/HP5 Plus 400" -> powerExposure(seconds, inverse, 1.31)
       "Ilford/Delta 3200" -> powerExposure(seconds, inverse, 1.33)
+      "Ilford/SFX 200" -> powerExposure(seconds, inverse, 1.43)
+      "Ilford/Ortho Plus" -> powerExposure(seconds, inverse, 1.25)
+      "Kentmere/Pan 200" -> if (seconds >= 0.0001) powerExposure(seconds, inverse, 1.26) else null
+      "Harman/Phoenix II 200", "Harman/Switch Azure 125" ->
+        if (seconds >= 0.0001) powerExposure(seconds, inverse, 1.31) else null
       "CineStill/CineStill 800T" -> powerExposure(seconds, inverse, 1.3)
       "Kodak/Tri-X 400" -> triXExposure(seconds, inverse)
       "Kodak/Portra 400", "Kodak/Gold 200", "Kodak/Ektar 100", "Kodak/Portra 160", "Kodak/Portra 800",
@@ -118,7 +155,8 @@ data class FilmStock(
       "Kodak/T-MAX 100" -> seconds.takeIf { it in 0.001..0.1 }
       "Ilford/FP4 Plus", "Ilford/Delta 100", "Ilford/Delta 400", "Ilford/Pan F Plus", "Ilford/XP2 Super",
       "Kentmere/Pan 100", "Kentmere/Pan 400", "CineStill/50D", "CineStill/400D" -> seconds.takeIf { it <= 1.0 }
-      "Foma/Fomapan 100" -> seconds.takeIf { it in 0.001..0.5 }
+      "Foma/Fomapan 100", "Foma/Fomapan 200", "Foma/Fomapan 400", "Foma/Retropan 320", "Foma/Ortho 400" ->
+        seconds.takeIf { it in 0.001..0.5 }
       "Fujifilm/Acros II" -> seconds.takeIf { it < 120.0 }
       "Fujifilm/Superia X-TRA 400" -> seconds.takeIf { it in 0.00025..2.0 }
       "Fujifilm/Velvia 50" -> seconds.takeIf { it in 0.00025..1.0 }
@@ -140,7 +178,9 @@ data class FilmStock(
         else "Kodak supplies no reciprocity range for ColorPlus 200. No timed recommendation is available above the app's assumed 1s limit."
       "Kodak/Ektachrome", "Kodak/T-MAX 100", "Kodak/T-MAX 400", "Ilford/FP4 Plus", "Ilford/Delta 100",
       "Ilford/Delta 400", "Ilford/Pan F Plus", "Ilford/XP2 Super", "Kentmere/Pan 100", "Kentmere/Pan 400",
-      "CineStill/50D", "CineStill/400D", "Foma/Fomapan 100", "Fujifilm/Acros II" ->
+      "CineStill/50D", "CineStill/400D", "Foma/Fomapan 100", "Fujifilm/Acros II",
+      "Foma/Fomapan 200", "Foma/Fomapan 400", "Foma/Retropan 320", "Foma/Ortho 400",
+      "Ilford/SFX 200", "Ilford/Ortho Plus", "Kentmere/Pan 200", "Harman/Phoenix II 200", "Harman/Switch Azure 125" ->
         if (calculateCorrectedExposure(rawSeconds) == null) rangeText else null
       "Fujifilm/Superia X-TRA 400" ->
         if (calculateCorrectedExposure(rawSeconds) == null) "Outside Fujifilm's uncorrected 1/4000s–2s range. Use its aperture correction table; no timed correction is supplied." else null

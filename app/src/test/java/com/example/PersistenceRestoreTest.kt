@@ -147,13 +147,14 @@ class PersistenceRestoreTest {
   }
 
   @Test
-  fun `backup rules exclude device calibration without restricting rolls or setup`() {
+  fun `backup excludes calibration and cloud photos without restricting rolls or device photo transfer`() {
     assertEquals(
-      setOf("full-backup-content:sharedpref:meter_device_calibration.xml"),
+      setOf("full-backup-content:sharedpref:meter_device_calibration.xml", "full-backup-content:file:shot-photos/"),
       backupExclusions(R.xml.backup_rules)
     )
     assertEquals(
-      setOf("cloud-backup:sharedpref:meter_device_calibration.xml", "device-transfer:sharedpref:meter_device_calibration.xml"),
+      setOf("cloud-backup:sharedpref:meter_device_calibration.xml", "device-transfer:sharedpref:meter_device_calibration.xml",
+        "cloud-backup:file:shot-photos/"),
       backupExclusions(R.xml.data_extraction_rules)
     )
   }
@@ -180,6 +181,10 @@ class PersistenceRestoreTest {
     override fun getAllLogEntries() = entries
     override fun getEntriesForRoll(rollId: String) = entries.map { list -> list.filter { it.rollId == rollId } }
     override suspend fun getLatestEntryForRoll(rollId: String) = entries.value.filter { it.rollId == rollId }.maxByOrNull { it.frameNumber }
+    override suspend fun getLogEntry(id: Int) = entries.value.firstOrNull { it.id == id }
+    override suspend fun updateLogPhoto(id: Int, name: String?) {
+      entries.value = entries.value.map { if (it.id == id) it.copy(photoFileName = name) else it }
+    }
     override suspend fun insertLogEntry(entry: FilmLogEntry): Long {
       val id = nextId++
       entries.value += entry.copy(id = id)

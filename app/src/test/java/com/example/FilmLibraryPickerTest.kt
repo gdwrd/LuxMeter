@@ -79,6 +79,32 @@ class FilmLibraryPickerTest {
   }
 
   @Test
+  fun customFilmActionAndSavedFilmSelectionDoNotApplyUntilConfirmed() {
+    var requested = false
+    val addedId = mutableStateOf<Int?>(null)
+    compose.setContent {
+      MyApplicationTheme {
+        FilmStockPickerSheet(
+          stocks = stocks, selectedStock = hp5, customIso = 800, pushStops = 1,
+          hapticManager = HapticManager(compose.activity),
+          onApply = { stock, rating, processing, confirmed ->
+            applied += Applied(stock?.id, rating, processing, confirmed); true
+          },
+          needsConfirmation = { _, _, _ -> false }, onDismiss = {},
+          onAddCustomFilm = { requested = true }, newFilmId = addedId.value
+        )
+      }
+    }
+    clickInSheet("Add custom film")
+    compose.runOnIdle { assertTrue(requested); assertTrue(applied.isEmpty()); addedId.value = portra.id }
+    scrollTo("Meter at EI 160")
+    compose.onNodeWithText("Ask lab: Normal processing").assertExists()
+    compose.runOnIdle { assertTrue(applied.isEmpty()) }
+    compose.onNodeWithText("Use for this roll").performClick()
+    compose.runOnIdle { assertEquals(listOf(Applied(portra.id, 160, 0, false)), applied) }
+  }
+
+  @Test
   fun searchFindsFilmsByBrandNameAndIsoIgnoringCase() {
     showSheet()
     search("kOdAk")

@@ -31,5 +31,6 @@ data class FilmLogEntry(
   @ColumnInfo(defaultValue = "''") val correctionKind: String = "",
   @ColumnInfo(defaultValue = "0") val isManual: Boolean = false,
   @ColumnInfo(defaultValue = "1") val hasMeterReading: Boolean = true,
-  @ColumnInfo(defaultValue = "NULL") val boxIso: Int? = null
+  @ColumnInfo(defaultValue = "NULL") val boxIso: Int? = null,
+  @ColumnInfo(defaultValue = "NULL") val photoFileName: String? = null
 )

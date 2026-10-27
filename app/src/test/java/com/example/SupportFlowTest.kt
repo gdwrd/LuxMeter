@@ -3,9 +3,9 @@ package com.example
 import com.example.sensor.ExposureCalculator
 import com.example.ui.components.remainingExposureMillis
 import com.example.ui.sunny16.sunny16ShutterForIso
-import com.example.ui.settings.isValidReciprocityExponent
-import com.example.ui.settings.parseReciprocityExponent
-import com.example.ui.settings.createUnlistedFilm
+import com.example.ui.components.isValidReciprocityExponent
+import com.example.ui.components.parseReciprocityExponent
+import com.example.ui.components.createUnlistedFilm
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull

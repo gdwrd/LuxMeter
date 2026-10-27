@@ -103,7 +103,7 @@ class SetupFlowsInstrumentedTest {
     compose.onNodeWithText("Start a new roll").performClick()
     compose.onNodeWithText("Meter at EI 400").assertExists()
     compose.onNodeWithText("Ask the lab: Normal processing").assertExists()
-    compose.onNodeWithText("+2").performClick()
+    compose.onNodeWithText("+2").performScrollTo().performClick()
     compose.onNodeWithText("Meter at EI 1600").assertExists()
     compose.onNodeWithText("Ask the lab: Push +2 stops").assertExists()
     val rollName = "Keyboard push test ${UUID.randomUUID()}"
@@ -112,10 +112,20 @@ class SetupFlowsInstrumentedTest {
     compose.waitForIdle()
     compose.onNodeWithText("Start roll").assertIsDisplayed().performClick()
     compose.waitUntil(timeoutMillis = 10_000) {
-      model.currentRoll.value?.let { it.id != previousRollId } == true && !model.isSaving.value
+      model.allRolls.value.any { it.name == rollName } && !model.isSaving.value
     }
     compose.runOnIdle {
-      ownedRollIds += model.currentRollId.value
+      val created = model.allRolls.value.single { it.name == rollName }
+      ownedRollIds += created.id
+      assertEquals(previousRollId, model.currentRollId.value)
+      assertEquals(rollName, created.name)
+      assertEquals(1600, created.iso)
+      assertEquals(2, created.pushStops)
+      assertEquals(400, created.boxIso)
+    }
+    compose.onNodeWithText("Continue this roll").performScrollTo().performClick()
+    compose.waitUntil(timeoutMillis = 10_000) { model.currentRollId.value != previousRollId && !model.isSaving.value }
+    compose.runOnIdle {
       assertEquals(rollName, model.currentRoll.value!!.name)
       assertEquals(1600, model.currentRoll.value!!.iso)
       assertEquals(2, model.currentRoll.value!!.pushStops)

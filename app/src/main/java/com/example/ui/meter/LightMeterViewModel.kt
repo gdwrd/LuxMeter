@@ -2,9 +2,12 @@ package com.example.ui.meter
 
 import android.app.Application
 import android.content.Context
+import android.graphics.Bitmap
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.AppDatabase
+import com.example.data.ShotPhotoStore
 import com.example.data.model.CameraFormat
 import com.example.data.model.CameraSetup
 import com.example.data.model.FilmRoll
@@ -21,11 +24,13 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.util.UUID
+import java.io.File
 import kotlin.math.log2
 import kotlin.math.abs
 import kotlin.math.pow
@@ -48,6 +53,7 @@ class LightMeterViewModel @JvmOverloads constructor(
   private val preferences = application.getSharedPreferences("meter_setup", Context.MODE_PRIVATE)
   private val deviceCalibration = application.getSharedPreferences("meter_device_calibration", Context.MODE_PRIVATE)
   private val repository = repositoryOverride ?: AppDatabase.getDatabase(application).repository()
+  private val photos = ShotPhotoStore(application)
   private val rollWrites = Mutex()
   val sensorManager = LightSensorManager(application)
   val hapticManager = HapticManager(application)
@@ -65,6 +71,10 @@ class LightMeterViewModel @JvmOverloads constructor(
   val readingMessage = _readingMessage.asStateFlow()
   private val _savedEntry = MutableStateFlow<FilmLogEntry?>(null)
   val savedEntry = _savedEntry.asStateFlow()
+  private val _manualSavedEntry = MutableStateFlow<FilmLogEntry?>(null)
+  val manualSavedEntry = _manualSavedEntry.asStateFlow()
+  private val _createdRollId = MutableStateFlow<String?>(null)
+  val createdRollId = _createdRollId.asStateFlow()
   private val _isSaving = MutableStateFlow(false)
   val isSaving = _isSaving.asStateFlow()
   private val _isAddingFilm = MutableStateFlow(false)
@@ -284,6 +294,14 @@ class LightMeterViewModel @JvmOverloads constructor(
         if (lux != null) onSensorLuxMeasured(lux)
       }
     }
+    viewModelScope.launch {
+      try {
+        photos.cleanOrphans(repository.allLogEntries.first().mapNotNull { it.photoFileName }.toSet())
+      } catch (error: Exception) {
+        if (error is CancellationException) throw error
+        // Orphan cleanup retries next launch; it must not prevent logging a shot.
+      }
+    }
   }
 
   private fun persistSetup() {
@@ -331,6 +349,7 @@ class LightMeterViewModel @JvmOverloads constructor(
     id = _currentRollId.value, name = _currentRollName.value,
     filmStockId = _selectedFilmStock.value?.id,
     filmStockName = _selectedFilmStock.value?.name ?: existing?.filmStockName.orEmpty(),
+    filmType = _selectedFilmStock.value?.type ?: existing?.filmType,
     iso = if (hasFrames) existing!!.iso else activeIso,
     boxIso = if (hasFrames) existing?.boxIso else _selectedFilmStock.value?.iso,
     pushStops = if (hasFrames) existing?.pushStops else _pushStops.value,
@@ -763,15 +782,16 @@ class LightMeterViewModel @JvmOverloads constructor(
     _userMessage.value = null
   }
 
-  fun logExposure(notes: String = "") {
+  fun logExposure(notes: String = "", photo: Bitmap? = null) {
     if (!_setupReady.value || _isSaving.value || _savedEntry.value != null ||
       _readingStatus.value != ReadingStatus.HELD || rawEv100.value == null) return
     val rawSec = getRawShutterSeconds() ?: return
     val corrSec = getCorrectedShutterSeconds() ?: return
-    saveFrame(availableApertures[_selectedApertureIndex.value], rawSec, corrSec, notes, manual = false)
+    saveFrame(availableApertures[_selectedApertureIndex.value], rawSec, corrSec, notes, manual = false,
+      photo = photo.takeIf { _measurementSource.value == MeasurementSource.CAMERA })
   }
 
-  fun recordManualExposure(aperture: Double, actualSeconds: Double, notes: String = "") {
+  fun recordManualExposure(aperture: Double, actualSeconds: Double, notes: String = "", photoUri: Uri? = null) {
     if (!_setupReady.value || _isSaving.value || _savedEntry.value != null ||
       !aperture.isFinite() || aperture !in 1.0..64.0 || !actualSeconds.isFinite() ||
       actualSeconds <= 0.0 || actualSeconds > ExposureCalculator.MAX_EXPOSURE_SECONDS) return
@@ -780,7 +800,7 @@ class LightMeterViewModel @JvmOverloads constructor(
         _exposureCompensation.value - _filterStops.value)).takeIf { seconds ->
           seconds.isFinite() && seconds > 0.0 && seconds <= ExposureCalculator.MAX_EXPOSURE_SECONDS }
     } ?: 0.0
-    saveFrame(aperture, measured, actualSeconds, notes, manual = true)
+    saveFrame(aperture, measured, actualSeconds, notes, manual = true, photoUri = photoUri)
   }
 
   fun beginNextManualFrame(): Boolean {
@@ -790,7 +810,107 @@ class LightMeterViewModel @JvmOverloads constructor(
     return true
   }
 
-  private fun saveFrame(aperture: Double, rawSec: Double, corrSec: Double, notes: String, manual: Boolean) {
+  fun recordManualExposureForRoll(
+    rollId: String, aperture: Double, actualSeconds: Double, notes: String = "", photoUri: Uri? = null
+  ) {
+    if (!_setupReady.value || _isSaving.value || _manualSavedEntry.value != null ||
+      !aperture.isFinite() || aperture !in 1.0..64.0 || !actualSeconds.isFinite() ||
+      actualSeconds <= 0.0 || actualSeconds > ExposureCalculator.MAX_EXPOSURE_SECONDS || notes.length > 5000) return
+    _isSaving.value = true
+    viewModelScope.launch {
+      var photoName: String? = null
+      var committed = false
+      var photoFailed = false
+      try {
+        rollWrites.withLock {
+          val roll = repository.getRoll(rollId)
+          if (roll == null) { _userMessage.value = "This roll no longer exists."; return@withLock }
+          if (roll.isFinished) { _userMessage.value = "Reopen this roll before adding a shot."; return@withLock }
+          val lastFrame = maxOf(roll.lastFrameNumber, repository.getLatestEntryForRoll(rollId)?.frameNumber ?: 0)
+          if (lastFrame >= roll.frameCapacity) { _userMessage.value = "This roll is full. Update its frame capacity before adding a shot."; return@withLock }
+          val camera = roll.cameraSetupId?.let { repository.getCameraSetup(it) }
+          if (photoUri != null) {
+            try { photoName = photos.importPhoto(photoUri) }
+            catch (error: Exception) {
+              if (error is CancellationException) throw error
+              photoFailed = true
+            }
+          }
+          val entry = FilmLogEntry(
+            rollId = roll.id, rollName = roll.name, frameNumber = lastFrame + 1,
+            filmStockName = roll.filmStockName.ifBlank { "Custom (ISO ${roll.iso})" }, iso = roll.iso,
+            boxIso = roll.boxIso, format = CameraFormat.entries.firstOrNull { it.name == roll.format }?.displayName ?: roll.format,
+            apertureText = ExposureCalculator.formatAperture(aperture), shutterText = ExposureCalculator.formatSeconds(actualSeconds),
+            rawSeconds = 0.0, correctedSeconds = actualSeconds, evValue = 0.0, luxValue = 0f,
+            notes = notes, cameraName = camera?.name.orEmpty(), focalLengthMm = roll.focalLengthMm,
+            correctionKind = "Manual", isManual = true, hasMeterReading = false, photoFileName = photoName
+          )
+          val updated = roll.copy(lastFrameNumber = entry.frameNumber)
+          val id = repository.insertFrame(entry, updated).toInt()
+          committed = true
+          updateCurrentRollProgress(updated)
+          _manualSavedEntry.value = entry.copy(id = id)
+        }
+        if (photoFailed && committed) _userMessage.value = "Shot saved without a photo. Open the shot to add it again."
+      } catch (error: Exception) {
+        if (!committed) deleteUnusedPhoto(photoName)
+        if (error is CancellationException) throw error
+        _userMessage.value = "Shot was not saved. Your details are kept; try again."
+      } finally { _isSaving.value = false }
+    }
+  }
+
+  fun clearManualSavedReceipt() { if (!_isSaving.value) _manualSavedEntry.value = null }
+
+  fun undoManualSavedExposure() {
+    val receipt = _manualSavedEntry.value ?: return
+    if (_isSaving.value) return
+    _isSaving.value = true
+    viewModelScope.launch {
+      try {
+        rollWrites.withLock {
+          val entry = repository.getLogEntry(receipt.id)
+          val roll = repository.getRoll(receipt.rollId)
+          if (entry == null || roll == null) { _manualSavedEntry.value = null; return@withLock }
+          val latest = repository.getLatestEntryForRoll(roll.id)
+          val count = if (latest?.id == entry.id && roll.lastFrameNumber == entry.frameNumber)
+            roll.lastFrameNumber - 1 else roll.lastFrameNumber
+          val updated = roll.copy(lastFrameNumber = count)
+          repository.deleteFrameAndUpdateRoll(entry.id, updated)
+          updateCurrentRollProgress(updated)
+          _manualSavedEntry.value = null
+          deleteUnusedPhoto(entry.photoFileName)
+          _userMessage.value = "Frame ${entry.frameNumber} removed."
+        }
+      } catch (error: Exception) {
+        if (error is CancellationException) throw error
+        _userMessage.value = "Could not undo the saved shot. Try again."
+      } finally { _isSaving.value = false }
+    }
+  }
+
+  private fun updateCurrentRollProgress(roll: FilmRoll) {
+    if (_currentRollId.value != roll.id) return
+    _currentRoll.value = roll
+    _activeRollFrameCount.value = roll.lastFrameNumber
+    preferences.edit().putInt("roll_frame_count", roll.lastFrameNumber).apply()
+  }
+
+  fun photoFile(name: String?): File? = photos.file(name)
+
+  private suspend fun deleteUnusedPhoto(name: String?) {
+    if (name == null) return
+    try { photos.delete(name) }
+    catch (error: Exception) {
+      if (error is CancellationException) throw error
+      // Failed file cleanup is retried by the orphan sweep on a later launch.
+    }
+  }
+
+  private fun saveFrame(
+    aperture: Double, rawSec: Double, corrSec: Double, notes: String, manual: Boolean,
+    photo: Bitmap? = null, photoUri: Uri? = null
+  ) {
     val roll = _currentRoll.value ?: return
     getCurrentRollGuidance()?.let { _userMessage.value = it; return }
     if (notes.length > 5000) { _userMessage.value = "Keep frame notes within 5,000 characters."; return }
@@ -824,16 +944,29 @@ class LightMeterViewModel @JvmOverloads constructor(
 
     _isSaving.value = true
     viewModelScope.launch {
+      var photoName: String? = null
+      var committed = false
+      var photoFailed = !manual && entry.meteringSource == MeasurementSource.CAMERA.name && photo == null
       try {
+        try {
+          photoName = if (photoUri != null) photos.importPhoto(photoUri) else photo?.let { photos.save(it) }
+        } catch (error: Exception) {
+          if (error is CancellationException) throw error
+          photoFailed = true
+        }
         rollWrites.withLock {
           val updated = rollFromSetup(_currentRoll.value).copy(lastFrameNumber = nextFrame)
-          val id = repository.insertFrame(entry, updated).toInt()
+          val withPhoto = entry.copy(photoFileName = photoName)
+          val id = repository.insertFrame(withPhoto, updated).toInt()
+          committed = true
           _activeRollFrameCount.value = nextFrame
           _currentRoll.value = updated
-          _savedEntry.value = entry.copy(id = id)
+          _savedEntry.value = withPhoto.copy(id = id)
         }
         persistSetup()
+        if (photoFailed) _userMessage.value = "Frame saved without a photo. Open the frame to add it again."
       } catch (error: Exception) {
+        if (!committed) deleteUnusedPhoto(photoName)
         if (error is CancellationException) throw error
         _userMessage.value = "Frame was not saved. Try again."
       } finally {
@@ -852,9 +985,9 @@ class LightMeterViewModel @JvmOverloads constructor(
           val count = if (entry.frameNumber == _activeRollFrameCount.value) _activeRollFrameCount.value - 1 else _activeRollFrameCount.value
           val updated = rollFromSetup(_currentRoll.value).copy(lastFrameNumber = count)
           repository.deleteFrameAndUpdateRoll(entry.id, updated)
-          _activeRollFrameCount.value = count
-          _currentRoll.value = updated
+          updateCurrentRollProgress(updated)
           _savedEntry.value = null
+          deleteUnusedPhoto(entry.photoFileName)
         }
         persistSetup()
         _userMessage.value = "Frame ${entry.frameNumber} removed."
@@ -866,6 +999,46 @@ class LightMeterViewModel @JvmOverloads constructor(
       }
     }
   }
+
+  fun createRoll(
+    name: String, capacity: Int, film: FilmStock?, camera: CameraSetup?, format: CameraFormat,
+    focalLengthMm: Int, iso: Int, pushStops: Int?
+  ) {
+    if (!_setupReady.value || _isSaving.value || _createdRollId.value != null ||
+      name.trim().length !in 1..100 || capacity !in 1..1000 ||
+      focalLengthMm !in 10..1000 || iso !in 1..102400 || (pushStops != null && pushStops !in 0..4) ||
+      (camera != null && camera.format != format.name) ||
+      (film != null && film.iso <= 0) ||
+      (pushStops != null && pushStops > 0 && film?.isoForPush(pushStops) == null)) return
+    _isSaving.value = true
+    _createdRollId.value = null
+    viewModelScope.launch {
+      try {
+        rollWrites.withLock {
+          if (film != null && repository.getFilmStock(film.id) == null) {
+            _userMessage.value = "This film no longer exists. Choose another film."; return@withLock
+          }
+          if (camera != null && repository.getCameraSetup(camera.id) == null) {
+            _userMessage.value = "This camera setup no longer exists. Choose another camera."; return@withLock
+          }
+          val roll = FilmRoll(
+            id = UUID.randomUUID().toString(), name = name.trim(), filmStockId = film?.id,
+            filmStockName = film?.name ?: "Unlisted film", filmType = film?.type, iso = iso,
+            boxIso = film?.iso, pushStops = pushStops, format = format.name,
+            cameraSetupId = camera?.id, focalLengthMm = focalLengthMm, frameCapacity = capacity
+          )
+          repository.saveRoll(roll)
+          _createdRollId.value = roll.id
+          _userMessage.value = "Created ${roll.name}. Add a shot to start its log."
+        }
+      } catch (error: Exception) {
+        if (error is CancellationException) throw error
+        _userMessage.value = "Could not create the roll. Your choices are kept; try again."
+      } finally { _isSaving.value = false }
+    }
+  }
+
+  fun clearCreatedRollReceipt() { if (!_isSaving.value) _createdRollId.value = null }
 
   fun startNewRoll(rollName: String, frameCapacity: Int = _selectedFormat.value.standardFramesPerRoll, pushStops: Int = 0) {
     if (!_setupReady.value || _isSaving.value || frameCapacity !in 1..1000 || rollName.trim().length !in 1..100 ||
@@ -981,10 +1154,37 @@ class LightMeterViewModel @JvmOverloads constructor(
       try {
         repository.updateLogNotes(id, notes)
         if (_savedEntry.value?.id == id) _savedEntry.value = _savedEntry.value?.copy(notes = notes)
+        if (_manualSavedEntry.value?.id == id) _manualSavedEntry.value = _manualSavedEntry.value?.copy(notes = notes)
         _userMessage.value = "Frame note saved."
       } catch (error: Exception) {
         if (error is CancellationException) throw error
         _userMessage.value = "Could not save the note. Try again."
+      } finally { _isSaving.value = false }
+    }
+  }
+
+  fun updateLogPhoto(id: Int, uri: Uri?) {
+    if (_isSaving.value) return
+    _isSaving.value = true
+    viewModelScope.launch {
+      var newName: String? = null
+      var committed = false
+      try {
+        rollWrites.withLock {
+          val entry = repository.getLogEntry(id)
+          if (entry == null) { _userMessage.value = "This shot no longer exists."; return@withLock }
+          newName = uri?.let { photos.importPhoto(it) }
+          repository.updateLogPhoto(id, newName)
+          committed = true
+          if (_savedEntry.value?.id == id) _savedEntry.value = _savedEntry.value?.copy(photoFileName = newName)
+          if (_manualSavedEntry.value?.id == id) _manualSavedEntry.value = _manualSavedEntry.value?.copy(photoFileName = newName)
+          deleteUnusedPhoto(entry.photoFileName)
+          _userMessage.value = if (uri == null) "Photo removed." else "Photo saved."
+        }
+      } catch (error: Exception) {
+        if (!committed) deleteUnusedPhoto(newName)
+        if (error is CancellationException) throw error
+        _userMessage.value = "Could not change the photo. The previous photo is kept."
       } finally { _isSaving.value = false }
     }
   }
@@ -1059,8 +1259,13 @@ class LightMeterViewModel @JvmOverloads constructor(
     _isSaving.value = true
     viewModelScope.launch {
       try {
-        repository.deleteLogEntry(id)
-        if (_savedEntry.value?.id == id) _savedEntry.value = null
+        rollWrites.withLock {
+          val entry = repository.getLogEntry(id)
+          repository.deleteLogEntry(id)
+          if (_savedEntry.value?.id == id) _savedEntry.value = null
+          if (_manualSavedEntry.value?.id == id) _manualSavedEntry.value = null
+          deleteUnusedPhoto(entry?.photoFileName)
+        }
       } catch (error: Exception) {
         if (error is CancellationException) throw error
         _userMessage.value = "Could not delete the frame. Try again."
@@ -1076,9 +1281,15 @@ class LightMeterViewModel @JvmOverloads constructor(
     viewModelScope.launch {
       try {
         rollWrites.withLock {
+          val photoNames = repository.getEntriesForRoll(rollId).first().mapNotNull { it.photoFileName }
           repository.deleteRoll(rollId)
-          _isSaving.value = false
-          if (_currentRollId.value == rollId) startNewRoll("New Roll")
+          if (_manualSavedEntry.value?.rollId == rollId) _manualSavedEntry.value = null
+          if (_currentRollId.value == rollId) {
+            _isSaving.value = false
+            startNewRoll("New Roll")
+            _isSaving.value = true
+          }
+          photoNames.forEach { deleteUnusedPhoto(it) }
         }
       } catch (error: Exception) {
         if (error is CancellationException) throw error
@@ -1091,6 +1302,13 @@ class LightMeterViewModel @JvmOverloads constructor(
 
   fun addCustomFilmStock(stock: FilmStock) {
     if (_isAddingFilm.value) return
+    if (!stock.isCustom || stock.name.isBlank() || stock.iso !in 1..12800 ||
+      stock.type !in listOf("Color Negative", "Black & White", "Color Slide", "Tungsten Cine") ||
+      (stock.hasReciprocityProfile && (!stock.reciprocityFactor.isFinite() || stock.reciprocityFactor < 1.0 ||
+        ExposureCalculator.SHUTTER_SECONDS.max().pow(stock.reciprocityFactor) > ExposureCalculator.MAX_EXPOSURE_SECONDS))) {
+      _userMessage.value = "Enter a film name, valid ISO and type, and a supported correction profile."
+      return
+    }
     _isAddingFilm.value = true
     _filmAddedId.value = null
     viewModelScope.launch {
@@ -1109,6 +1327,7 @@ class LightMeterViewModel @JvmOverloads constructor(
   fun clearFilmAddedReceipt() { _filmAddedId.value = null }
 
   fun deleteFilmStock(id: Int) {
+    if (_isSaving.value) return
     viewModelScope.launch {
       try {
         repository.deleteStock(id)

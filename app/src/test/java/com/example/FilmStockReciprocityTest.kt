@@ -3,6 +3,7 @@ package com.example
 import com.example.data.model.FilmStock
 import org.junit.Assert.*
 import org.junit.Test
+import kotlin.math.pow
 
 class FilmStockReciprocityTest {
   private fun film(name: String, brand: String, factor: Double = 1.22, custom: Boolean = false) = FilmStock(
@@ -136,5 +137,52 @@ class FilmStockReciprocityTest {
     assertNotNull(stock.reciprocityGuidance(1.0 / 125.0))
     assertNull(stock.calculateCorrectedExposure(1.01))
     assertTrue(stock.reciprocityGuidance(1.01)!!.contains("No timed recommendation"))
+  }
+
+  @Test fun addedManufacturerPowersRespectRangesAndRemainInvertible() {
+    val powers = listOf(
+      Triple("Ilford", "SFX 200", 1.43), Triple("Ilford", "Ortho Plus", 1.25),
+      Triple("Kentmere", "Pan 200", 1.26), Triple("Harman", "Phoenix II 200", 1.31),
+      Triple("Harman", "Switch Azure 125", 1.31)
+    )
+    for ((brand, name, exponent) in powers) {
+      val stock = film(name, brand)
+      assertEquals("Manufacturer guidance", stock.correctionLabel)
+      assertNotNull(stock.sourceUrl)
+      for (metered in listOf(0.0001, 0.5, 1.0, 10.0, 100.0)) {
+        val expected = if (metered <= 1.0) metered else metered.pow(exponent)
+        assertEquals("$brand $name", expected, stock.calculateCorrectedExposure(metered)!!, 0.000001)
+        assertEquals(metered, stock.calculateMeteredExposure(expected)!!, 0.000001)
+      }
+      if (brand != "Ilford") {
+        assertNull(stock.calculateCorrectedExposure(0.00001))
+        assertNull(stock.calculateMeteredExposure(0.00001))
+        assertNotNull(stock.reciprocityGuidance(0.00001))
+      }
+      assertNull(stock.calculateCorrectedExposure(86_400.0))
+    }
+  }
+
+  @Test fun addedFomaProfilesKeepPublishedOrdinaryExposureBoundaries() {
+    for (name in listOf("Fomapan 200", "Fomapan 400", "Retropan 320", "Ortho 400")) {
+      val stock = film(name, "Foma")
+      for (seconds in listOf(0.001, 1.0 / 125.0, 0.5)) {
+        assertEquals(seconds, stock.calculateCorrectedExposure(seconds)!!, 0.0)
+        assertEquals(seconds, stock.calculateMeteredExposure(seconds)!!, 0.0)
+      }
+      for (seconds in listOf(0.0009, 0.5001, 1.0, 100.0)) {
+        assertNull(stock.calculateCorrectedExposure(seconds))
+        assertNull(stock.calculateMeteredExposure(seconds))
+        assertNotNull(stock.reciprocityGuidance(seconds))
+      }
+    }
+  }
+
+  @Test fun monochromeUsesFilmTypeForBuiltinAndCustomStocks() {
+    assertTrue(film("BwXX", "CineStill").copy(type = "Black & White").isBlackAndWhite)
+    assertTrue(film("My film", "My lab", custom = true).copy(type = "Black & White").isBlackAndWhite)
+    assertTrue(film("Fomapan R 100", "Foma").copy(type = "Black & White").isBlackAndWhite)
+    assertFalse(film("Black and white name", "My lab").copy(type = "Color Negative").isBlackAndWhite)
+    assertFalse(film("Unspecified", "My lab").isBlackAndWhite)
   }
 }

@@ -21,7 +21,7 @@ import com.example.data.repository.FilmRepository
 
 @Database(
   entities = [FilmStock::class, FilmLogEntry::class, CameraSetup::class, FilmRoll::class],
-  version = 3,
+  version = 4,
   exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -116,6 +116,14 @@ abstract class AppDatabase : RoomDatabase() {
       }
     }
 
+    val MIGRATION_3_4 = object : Migration(3, 4) {
+      override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE film_log_entries ADD COLUMN photoFileName TEXT DEFAULT NULL")
+        db.execSQL("ALTER TABLE film_rolls ADD COLUMN filmType TEXT DEFAULT NULL")
+        db.execSQL("UPDATE film_rolls SET filmType = (SELECT type FROM film_stocks WHERE id = film_rolls.filmStockId)")
+      }
+    }
+
     fun getDatabase(context: Context): AppDatabase {
       return INSTANCE ?: synchronized(this) {
         INSTANCE?.let { return@synchronized it }
@@ -124,7 +132,7 @@ abstract class AppDatabase : RoomDatabase() {
           AppDatabase::class.java,
           "luxmeter_analog.db"
         )
-        .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+        .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
         .addCallback(DatabaseCallback())
         .build()
         INSTANCE = instance
@@ -326,6 +334,174 @@ abstract class AppDatabase : RoomDatabase() {
             reciprocityFactor = 1.0, reciprocityThresholdSec = 120.0,
             description = "Fine-grained black-and-white film with excellent reciprocity characteristics.",
             badgeStyle = "ACROS"
+          ),
+          FilmStock(
+            name = "Pan 200", brand = "Kentmere", iso = 200, type = "Black & White",
+            reciprocityFactor = 1.26,
+            description = "Medium-speed black-and-white film with fine grain and medium-high contrast.",
+            badgeStyle = "KENTMERE"
+          ),
+          FilmStock(
+            name = "SFX 200", brand = "Ilford", iso = 200, type = "Black & White",
+            reciprocityFactor = 1.43,
+            description = "Extended-red-sensitive black-and-white film. Infrared effects need a suitable filter and exposure tests.",
+            badgeStyle = "SFX"
+          ),
+          FilmStock(
+            name = "Ortho Plus", brand = "Ilford", iso = 80, type = "Black & White",
+            reciprocityFactor = 1.25,
+            description = "Orthochromatic black-and-white film; rate at EI 80 in daylight or EI 40 in tungsten light.",
+            badgeStyle = "ORTHO"
+          ),
+          FilmStock(
+            name = "Fomapan 200", brand = "Foma", iso = 200, type = "Black & White",
+            reciprocityFactor = 1.0, reciprocityThresholdSec = 0.5,
+            description = "Medium-speed black-and-white negative film with fine grain and high resolution.",
+            badgeStyle = "FOMAPAN"
+          ),
+          FilmStock(
+            name = "Fomapan 400", brand = "Foma", iso = 400, type = "Black & White",
+            reciprocityFactor = 1.0, reciprocityThresholdSec = 0.5,
+            description = "High-speed black-and-white negative film for available light and shorter exposures.",
+            badgeStyle = "FOMAPAN"
+          ),
+          FilmStock(
+            name = "Retropan 320", brand = "Foma", iso = 320, type = "Black & White",
+            reciprocityFactor = 1.0, reciprocityThresholdSec = 0.5,
+            description = "Black-and-white negative film with soft contrast and a broad range of mid-tones.",
+            badgeStyle = "RETROPAN"
+          ),
+          FilmStock(
+            name = "Ortho 400", brand = "Foma", iso = 400, type = "Black & White",
+            reciprocityFactor = 1.0, reciprocityThresholdSec = 0.5,
+            description = "High-speed orthochromatic black-and-white film with strong green sensitivity.",
+            badgeStyle = "ORTHO"
+          ),
+          FilmStock(
+            name = "Fomapan R 100", brand = "Foma", iso = 100, type = "Black & White",
+            reciprocityFactor = 1.0, hasReciprocityProfile = false,
+            description = "Black-and-white reversal film for slides; requires a suitable reversal process.",
+            badgeStyle = "FOMAPAN"
+          ),
+          FilmStock(
+            name = "RPX 25", brand = "Rollei", iso = 25, type = "Black & White",
+            reciprocityFactor = 1.0, hasReciprocityProfile = false,
+            description = "Low-speed black-and-white negative film for fine grain and detailed subjects.",
+            badgeStyle = "RPX"
+          ),
+          FilmStock(
+            name = "RPX 100", brand = "Rollei", iso = 100, type = "Black & White",
+            reciprocityFactor = 1.0, hasReciprocityProfile = false,
+            description = "Medium-speed black-and-white negative film for bright light and fine detail.",
+            badgeStyle = "RPX"
+          ),
+          FilmStock(
+            name = "RPX 400", brand = "Rollei", iso = 400, type = "Black & White",
+            reciprocityFactor = 1.0, hasReciprocityProfile = false,
+            description = "High-speed black-and-white negative film for changing light and moving subjects.",
+            badgeStyle = "RPX"
+          ),
+          FilmStock(
+            name = "Retro 80S", brand = "Rollei", iso = 80, type = "Black & White",
+            reciprocityFactor = 1.0, hasReciprocityProfile = false,
+            description = "Fine-grained superpanchromatic black-and-white film on a clear base.",
+            badgeStyle = "RETRO"
+          ),
+          FilmStock(
+            name = "Retro 400S", brand = "Rollei", iso = 400, type = "Black & White",
+            reciprocityFactor = 1.0, hasReciprocityProfile = false,
+            description = "High-speed black-and-white negative film with extended spectral sensitivity.",
+            badgeStyle = "RETRO"
+          ),
+          FilmStock(
+            name = "Superpan 200", brand = "Rollei", iso = 200, type = "Black & White",
+            reciprocityFactor = 1.0, hasReciprocityProfile = false,
+            description = "Black-and-white film with extended red sensitivity, suitable for negative or reversal processing.",
+            badgeStyle = "SUPERPAN"
+          ),
+          FilmStock(
+            name = "Infrared 400", brand = "Rollei", iso = 400, type = "Black & White",
+            reciprocityFactor = 1.0, hasReciprocityProfile = false,
+            description = "Infrared-sensitive black-and-white film. ISO 400 is unfiltered; infrared filters require exposure tests.",
+            badgeStyle = "INFRARED"
+          ),
+          FilmStock(
+            name = "Ortho 25 Plus", brand = "Rollei", iso = 25, type = "Black & White",
+            reciprocityFactor = 1.0, hasReciprocityProfile = false,
+            description = "Low-speed orthochromatic black-and-white film for fine detail and distinctive tones.",
+            badgeStyle = "ORTHO"
+          ),
+          FilmStock(
+            name = "BwXX", brand = "CineStill", iso = 250, type = "Black & White",
+            reciprocityFactor = 1.0, hasReciprocityProfile = false,
+            description = "Panchromatic black-and-white cinema film; rate at EI 250 in daylight or EI 200 in tungsten light.",
+            badgeStyle = "BWXX"
+          ),
+          FilmStock(
+            name = "Phoenix II 200", brand = "Harman", iso = 200, type = "Color Negative",
+            reciprocityFactor = 1.31,
+            description = "Second-generation C-41 colour film. Maker recommends EI 100–200 and does not recommend push processing.",
+            badgeStyle = "PHOENIX"
+          ),
+          FilmStock(
+            name = "Phoenix 125", brand = "Harman", iso = 125, type = "Color Negative",
+            reciprocityFactor = 1.0, hasReciprocityProfile = false,
+            description = "High-contrast C-41 colour film with visible grain, rated at ISO 125.",
+            badgeStyle = "PHOENIX"
+          ),
+          FilmStock(
+            name = "RED 125", brand = "Harman", iso = 125, type = "Color Negative",
+            reciprocityFactor = 1.0, hasReciprocityProfile = false,
+            description = "C-41 redscale film with warm red and orange tones. Maker recommends starting at EI 100–200.",
+            badgeStyle = "RED"
+          ),
+          FilmStock(
+            name = "Switch Azure 125", brand = "Harman", iso = 125, type = "Color Negative",
+            reciprocityFactor = 1.31,
+            description = "C-41 colour-shifting film, rated at ISO 125. Maker does not recommend push processing.",
+            badgeStyle = "AZURE"
+          ),
+          FilmStock(
+            name = "Color Negative 100", brand = "Lomography", iso = 100, type = "Color Negative",
+            reciprocityFactor = 1.0, hasReciprocityProfile = false,
+            description = "Daylight-speed C-41 colour negative film.",
+            badgeStyle = "LOMOGRAPHY"
+          ),
+          FilmStock(
+            name = "Color Negative 400", brand = "Lomography", iso = 400, type = "Color Negative",
+            reciprocityFactor = 1.0, hasReciprocityProfile = false,
+            description = "General-purpose C-41 colour negative film for changing light.",
+            badgeStyle = "LOMOGRAPHY"
+          ),
+          FilmStock(
+            name = "Color Negative 800", brand = "Lomography", iso = 800, type = "Color Negative",
+            reciprocityFactor = 1.0, hasReciprocityProfile = false,
+            description = "High-speed C-41 colour negative film for available light.",
+            badgeStyle = "LOMOGRAPHY"
+          ),
+          FilmStock(
+            name = "Earl Grey 100", brand = "Lomography", iso = 100, type = "Black & White",
+            reciprocityFactor = 1.0, hasReciprocityProfile = false,
+            description = "Medium-speed black-and-white negative film for daylight scenes.",
+            badgeStyle = "EARL GREY"
+          ),
+          FilmStock(
+            name = "Lady Grey 400", brand = "Lomography", iso = 400, type = "Black & White",
+            reciprocityFactor = 1.0, hasReciprocityProfile = false,
+            description = "High-speed black-and-white negative film for mixed lighting.",
+            badgeStyle = "LADY GREY"
+          ),
+          FilmStock(
+            name = "Potsdam Kino 100", brand = "Lomography", iso = 100, type = "Black & White",
+            reciprocityFactor = 1.0, hasReciprocityProfile = false,
+            description = "Medium-speed black-and-white cinema film for daylight photography.",
+            badgeStyle = "POTSDAM"
+          ),
+          FilmStock(
+            name = "Berlin Kino 400", brand = "Lomography", iso = 400, type = "Black & White",
+            reciprocityFactor = 1.0, hasReciprocityProfile = false,
+            description = "High-speed black-and-white cinema film for varied lighting.",
+            badgeStyle = "BERLIN"
           )
         )
         // Repair old/empty installs before Room serves queries, without a ViewModel lifetime race.
