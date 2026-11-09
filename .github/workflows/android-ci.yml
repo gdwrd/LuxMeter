@@ -30,11 +30,12 @@ jobs:
         with:
           packages: 'platform-tools platforms;android-36.1 build-tools;36.0.0'
 
-      - name: Run unit tests, lint and build debug APKs
+      - name: Run unit tests, lint and build APKs
         run: >-
           ./gradlew --no-daemon --console=plain --max-workers=2
           :app:testDebugUnitTest :app:lintDebug
           :app:assembleDebug :app:assembleDebugAndroidTest
+          :app:lintRelease :app:assembleRelease
 
       - name: Enable emulator acceleration
         run: |
@@ -42,7 +43,7 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
-      - name: Run Android UI tests
+      - name: Run Android UI and release startup tests
         uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         with:
           api-level: 35
@@ -53,7 +54,18 @@ jobs:
           emulator-options: >-
             -no-window -gpu swiftshader_indirect -no-snapshot
             -noaudio -no-boot-anim -camera-back none -camera-front none
-          script: ./gradlew --no-daemon --console=plain --max-workers=2 :app:connectedDebugAndroidTest
+          script: |
+            ./gradlew --no-daemon --console=plain --max-workers=2 :app:connectedDebugAndroidTest
+            "$ANDROID_HOME/build-tools/36.0.0/apksigner" sign --alignment-preserved true --ks "$HOME/.android/debug.keystore" --ks-key-alias androiddebugkey --ks-pass pass:android --key-pass pass:android --out "$RUNNER_TEMP/release-smoke.apk" app/build/outputs/apk/release/app-release-unsigned.apk
+            adb install --no-incremental -r "$RUNNER_TEMP/release-smoke.apk"
+            adb logcat -c
+            adb shell am start -W -n com.nsheremet.luxmeter/com.example.MainActivity > "$RUNNER_TEMP/release-smoke-start.txt"
+            cat "$RUNNER_TEMP/release-smoke-start.txt"
+            grep -q 'Status: ok' "$RUNNER_TEMP/release-smoke-start.txt"
+            sleep 5
+            adb logcat -b crash -d > "$RUNNER_TEMP/release-smoke-crashes.txt"
+            if grep -Eq 'Process: com\.nsheremet\.luxmeter,|>>> com\.nsheremet\.luxmeter <<<' "$RUNNER_TEMP/release-smoke-crashes.txt"; then cat "$RUNNER_TEMP/release-smoke-crashes.txt"; exit 1; fi
+            adb shell pidof com.nsheremet.luxmeter
 
       - name: Upload test and lint reports
         if: always()
@@ -64,6 +76,8 @@ jobs:
             app/build/reports/
             app/build/test-results/
             app/build/outputs/androidTest-results/
+            ${{ runner.temp }}/release-smoke-start.txt
+            ${{ runner.temp }}/release-smoke-crashes.txt
           retention-days: 14
 
       - name: Upload debug APK
@@ -118,11 +132,25 @@ jobs:
         run: |
           : "${STORE_PASSWORD:?Configure the STORE_PASSWORD repository secret}"
           : "${KEY_PASSWORD:?Configure the KEY_PASSWORD repository secret}"
-          VERSION_NAME="${TAG_NAME#v}"
-          VERSION_NAME="${VERSION_NAME:-$TAG_NAME}"
-          ./gradlew --no-daemon --console=plain --max-workers=2 \
-            -PreleaseVersionName="$VERSION_NAME" -PreleaseVersionCode="$GITHUB_RUN_NUMBER" \
-            :app:lintRelease :app:assembleRelease
+          [[ "$TAG_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo 'Use a vX.Y.Z version tag.' >&2; exit 1; }
+          env -u KEYSTORE_PATH ./gradlew --no-daemon --console=plain --max-workers=2 \
+            --no-configuration-cache :app:lintRelease :app:assembleRelease
+          python3 - <<'PYTHON'
+          import json, os
+          from pathlib import Path
+          metadata = json.loads(Path('app/build/outputs/apk/release/output-metadata.json').read_text())
+          assert metadata['applicationId'] == 'com.nsheremet.luxmeter', metadata
+          assert len(metadata['elements']) == 1, metadata
+          apk = metadata['elements'][0]
+          assert apk['versionName'] == os.environ['TAG_NAME'][1:], 'Tag must match the app versionName.'
+          assert 1 <= apk['versionCode'] <= 2100000000, 'Invalid versionCode.'
+          PYTHON
+          # Preserve ZIP alignment so F-Droid can reproduce the APK and copy its signature.
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" sign --alignment-preserved true \
+            --ks "$KEYSTORE_PATH" --ks-key-alias upload \
+            --ks-pass env:STORE_PASSWORD --key-pass env:KEY_PASSWORD \
+            --out app/build/outputs/apk/release/app-release.apk \
+            app/build/outputs/apk/release/app-release-unsigned.apk
 
       - name: Publish GitHub Release with APK
         env:

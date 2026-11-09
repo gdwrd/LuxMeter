@@ -1,0 +1,15 @@
+LuxMeter is an exposure companion for film photography. Meter a scene with your phone camera or light sensor, choose settings for your film camera, and keep your frames organised in rolls. Sunny 16 is also available as an estimate tool.
+
+• Camera metering with whole-frame, centre and selected-area readings, plus a held preview.
+• Aperture priority, shutter priority and manual exposure, with camera-specific shutter and aperture limits.
+• Separate camera and light-sensor calibration, exposure compensation and filter adjustments.
+• 55 film presets, custom films and film-specific reciprocity guidance within documented limits.
+• Roll-level shooting speed and push-processing notes, named camera setups, formats and approximate lens framing.
+• Depth-of-field estimates and a foreground long-exposure timer.
+• Saved rolls and frames with exposure settings, notes and optional private reference photos; manual shot logging works without camera permission.
+• CSV sharing for roll settings and notes.
+• Light and dark themes, adaptable layouts and accessible exposure controls.
+
+No account is required. Metering, calibration, logs and reference photos are processed and stored on your device. Reference photos are reduced copies without the source image metadata and are excluded from cloud backup; restored logs may therefore lack their photos.
+
+Phone metering is a device-dependent estimate. Compare it with a reference meter before relying on it for film. Preview framing is approximate, and a monochrome preview does not simulate the final film photograph. Unsupported film correction ranges are shown explicitly; the app does not invent long-exposure corrections. The timer must remain open, and you operate your film camera's shutter separately.

@@ -1,0 +1,1 @@
+Prepare for F-Droid: remove unused Firebase and reCAPTCHA dependencies, optimise release code and resources, and add store metadata. Use stable version numbers and reproducible APK signing. Includes all improvements from 1.0.4: manual shot logging, private reference photos, 55 film presets, push processing, accessible exposure dials and improved low-light handling.

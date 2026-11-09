@@ -78,7 +78,7 @@ The timer compensates for delayed UI frames and configuration changes using elap
 
 ## Build and test
 
-Requirements: JDK 17 or newer (tested with JDK 21), Android SDK platform 36.1, build tools 36.0.0, and an SDK location supplied through `ANDROID_HOME` or an ignored `local.properties`.
+Requirements: JDK 21, Android SDK platform 36.1, build tools 36.0.0, and an SDK location supplied through `ANDROID_HOME` or an ignored `local.properties`.
 
 ```sh
 ./gradlew :app:testDebugUnitTest :app:assembleDebug
@@ -88,7 +88,7 @@ The wrapper pins Gradle 9.3.1 and verifies its distribution checksum. Release bu
 
 These IDs identify new Android apps. Existing installations under `com.aistudio.luxmeter.analog` and `com.aistudio.luxmeter.analog.debug` remain separate, and their saved data does not move automatically to the new apps. Keep the old apps until you have backed up any records you need.
 
-GitHub Actions runs unit tests, lint, a debug build, and the full Android UI test suite on an API 35 emulator for every push and pull request. The workflow also supports manual runs. Download **luxmeter-preview** for the debug APK or **android-test-reports** for results from the run's artifacts; they are retained for 14 days.
+GitHub Actions runs unit tests, lint, debug and optimized release builds, and the full Android UI test suite on an API 35 emulator for every push and pull request. The workflow also supports manual runs. Download **luxmeter-preview** for the debug APK or **android-test-reports** for results from the run's artifacts; they are retained for 14 days.
 
 Tests cover exposure and depth-of-field calculations, selected-area camera crop/rotation/zoom geometry, metadata validation, source isolation and calibration, camera limits/Bulb, exposure/filter adjustments, held readings, loaded rolls, manual and calculated saving, notes/export, migration and transactional rollback, profile repair, backup exclusions, locale inputs, Sunny 16 choices, timer timing, and readable exposure controls.
 
@@ -98,17 +98,21 @@ Before relying on a release, verify camera permission/retry, frame alignment, ro
 
 ## GitHub releases
 
-Push a tag on a commit containing the release workflow to build and publish a signed APK after all CI checks pass:
+Update `versionName` and increase `versionCode` in `app/build.gradle.kts`, then push a matching `vX.Y.Z` tag to build and publish a signed APK after all CI checks pass:
 
 ```sh
-git tag v1.0.1
-git push origin v1.0.1
+git tag v1.0.5
+git push origin v1.0.5
 ```
 
-The release contains **LuxMeter-v1.0.1.apk** and generated release notes. The app version is the tag with an optional leading `v` removed; Android's version code uses the increasing GitHub Actions run number. All tag names trigger releases. Rerunning a published tag keeps its existing APK; a failed draft can resume uploading before publication.
+The release contains **LuxMeter-v1.0.5.apk** and generated release notes. The workflow requires a `vX.Y.Z` tag matching the version declared in the source; version codes are also declared in source so F-Droid can discover updates and reproduce each APK. Release builds enable R8 and resource shrinking. The workflow signs the unsigned APK with ZIP alignment preserved for reproducible builds. Rerunning a published tag keeps its existing APK; a failed draft can resume uploading before publication.
 
 Signing uses a stable PKCS12 keystore with alias `upload`, supplied through repository secrets **KEYSTORE_BASE64**, **STORE_PASSWORD**, and **KEY_PASSWORD**. The keystore is decoded only into the runner's temporary directory and removed after the job. Keep a secure backup of this key and its password: future updates to `com.nsheremet.luxmeter` must use the same signing key. The new app can be installed alongside the original app without removing its data.
 
 ## Technical foundation
 
 Kotlin, Jetpack Compose Material 3, CameraX, StateFlow, and Room. Android 7.0 (API 24) or newer. The interface follows the system's light/dark appearance and adapts to wider screens.
+
+## License
+
+Copyright 2026 gdwrd. Source code and project assets, including the logo and store screenshot, are licensed under [Apache-2.0](LICENSE). Third-party libraries retain their respective licenses.
