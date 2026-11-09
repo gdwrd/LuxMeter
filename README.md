@@ -101,11 +101,11 @@ Before relying on a release, verify camera permission/retry, frame alignment, ro
 Update `versionName` and increase `versionCode` in `app/build.gradle.kts`, then push a matching `vX.Y.Z` tag to build and publish a signed APK after all CI checks pass:
 
 ```sh
-git tag v1.0.5
-git push origin v1.0.5
+git tag v1.0.6
+git push origin v1.0.6
 ```
 
-The release contains **LuxMeter-v1.0.5.apk** and generated release notes. The workflow requires a `vX.Y.Z` tag matching the version declared in the source; version codes are also declared in source so F-Droid can discover updates and reproduce each APK. Release builds enable R8 and resource shrinking. The workflow signs the unsigned APK with ZIP alignment preserved for reproducible builds. Rerunning a published tag keeps its existing APK; a failed draft can resume uploading before publication.
+The release contains **LuxMeter-v1.0.6.apk** and generated release notes. The workflow requires a `vX.Y.Z` tag matching the version declared in the source; version codes are also declared in source so F-Droid can discover updates and reproduce each APK. Release builds enable R8 and resource shrinking. The workflow signs the unsigned APK with ZIP alignment preserved for reproducible builds. Rerunning a published tag keeps its existing APK; a failed draft can resume uploading before publication.
 
 Signing uses a stable PKCS12 keystore with alias `upload`, supplied through repository secrets **KEYSTORE_BASE64**, **STORE_PASSWORD**, and **KEY_PASSWORD**. The keystore is decoded only into the runner's temporary directory and removed after the job. Keep a secure backup of this key and its password: future updates to `com.nsheremet.luxmeter` must use the same signing key. The new app can be installed alongside the original app without removing its data.
 

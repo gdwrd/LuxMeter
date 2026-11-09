@@ -71,6 +71,7 @@ class RollLoggingInstrumentedTest {
     runBlocking(Dispatchers.IO) { AppDatabase.getDatabase(application).repository().saveRoll(target) }
     val originalRollId = model.currentRollId.value
     compose.setContent { MyApplicationTheme { RollsScreen(model) } }
+    compose.waitUntil(timeoutMillis = 10_000) { model.allRolls.value.any { it.id == target.id } }
     compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText(targetName))
     compose.onNodeWithText(targetName).performClick()
     compose.onNodeWithText("Add shot").performClick()
