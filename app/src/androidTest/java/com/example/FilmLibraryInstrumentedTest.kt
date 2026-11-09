@@ -113,6 +113,7 @@ class FilmLibraryInstrumentedTest {
     compose.onNodeWithText(velvia.name).assertExists()
     compose.onNodeWithText(hp5.name).assertDoesNotExist()
     search("missing film")
+    scrollTo("No matching films")
     compose.onNodeWithText("No matching films").assertIsDisplayed()
     scrollTo("Meter at EI 400")
     compose.onNodeWithText("Ask lab: Normal processing").assertExists()

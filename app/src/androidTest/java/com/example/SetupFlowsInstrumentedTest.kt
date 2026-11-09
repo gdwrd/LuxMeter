@@ -9,6 +9,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasScrollAction
+import androidx.compose.ui.test.hasScrollToIndexAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
@@ -139,6 +140,7 @@ class SetupFlowsInstrumentedTest {
     compose.waitUntil(timeoutMillis = 10_000) { model.currentRoll.value?.lastFrameNumber == 1 && !model.isSaving.value }
     compose.runOnIdle { model.setFilmStock(portra) }
     compose.onNodeWithText("Edit film and processing").performClick()
+    compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText("Meter at EI 1600"))
     compose.onNodeWithText("Meter at EI 1600").assertExists()
     compose.onNodeWithText("Ask lab: Push +2 stops").assertExists()
     compose.onNodeWithText("Use for this roll").performClick()
