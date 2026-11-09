@@ -8,6 +8,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.hasScrollToIndexAction
 import androidx.compose.ui.test.hasText
@@ -140,7 +142,8 @@ class SetupFlowsInstrumentedTest {
     compose.waitUntil(timeoutMillis = 10_000) { model.currentRoll.value?.lastFrameNumber == 1 && !model.isSaving.value }
     compose.runOnIdle { model.setFilmStock(portra) }
     compose.onNodeWithText("Edit film and processing").performClick()
-    compose.onNode(hasScrollToIndexAction()).performScrollToNode(hasText("Meter at EI 1600"))
+    compose.onNode(hasScrollToIndexAction() and SemanticsMatcher.keyIsDefined(SemanticsProperties.SelectableGroup))
+      .performScrollToNode(hasText("Meter at EI 1600"))
     compose.onNodeWithText("Meter at EI 1600").assertExists()
     compose.onNodeWithText("Ask lab: Push +2 stops").assertExists()
     compose.onNodeWithText("Use for this roll").performClick()

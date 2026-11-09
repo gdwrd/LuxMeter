@@ -56,7 +56,8 @@ jobs:
             -noaudio -no-boot-anim -camera-back none -camera-front none
           script: |
             ./gradlew --no-daemon --console=plain --max-workers=2 :app:connectedDebugAndroidTest
-            "$ANDROID_HOME/build-tools/36.0.0/apksigner" sign --alignment-preserved true --ks "$HOME/.android/debug.keystore" --ks-key-alias androiddebugkey --ks-pass pass:android --key-pass pass:android --out "$RUNNER_TEMP/release-smoke.apk" app/build/outputs/apk/release/app-release-unsigned.apk
+            keytool -genkeypair -keystore "$RUNNER_TEMP/release-smoke.p12" -storetype PKCS12 -storepass android -keypass android -alias smoke -keyalg RSA -keysize 2048 -validity 1 -dname 'CN=CI smoke test'
+            "$ANDROID_HOME/build-tools/36.0.0/apksigner" sign --alignment-preserved true --ks "$RUNNER_TEMP/release-smoke.p12" --ks-key-alias smoke --ks-pass pass:android --key-pass pass:android --out "$RUNNER_TEMP/release-smoke.apk" app/build/outputs/apk/release/app-release-unsigned.apk
             adb install --no-incremental -r "$RUNNER_TEMP/release-smoke.apk"
             adb logcat -c
             adb shell am start -W -n com.nsheremet.luxmeter/com.example.MainActivity > "$RUNNER_TEMP/release-smoke-start.txt"
